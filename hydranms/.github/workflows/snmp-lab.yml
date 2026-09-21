@@ -1,0 +1,87 @@
+name: SNMP lab matrix
+
+on:
+  schedule:
+    - cron: "17 3 * * 1-5"
+  workflow_dispatch:
+  workflow_call:
+    secrets: inherit
+
+permissions:
+  contents: read
+
+jobs:
+  snmp-lab:
+    name: Approved SNMP lab matrix
+    runs-on: ubuntu-latest
+    environment: snmp-lab
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.26.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Materialize approved lab matrix
+        env:
+          SNMP_MATRIX_CONFIG_JSON: ${{ secrets.SNMP_MATRIX_CONFIG }}
+        run: |
+          set -eu
+          test -n "$SNMP_MATRIX_CONFIG_JSON"
+          umask 077
+          printf '%s' "$SNMP_MATRIX_CONFIG_JSON" > "$RUNNER_TEMP/snmp-lab.matrix.json"
+
+      - name: Run release-gated SNMP matrix
+        env:
+          SNMP_MATRIX_CONFIG: ${{ runner.temp }}/snmp-lab.matrix.json
+          SNMP_LAB_APPROVED_TARGETS: ${{ secrets.SNMP_LAB_APPROVED_TARGETS }}
+          SNMP_LAB_CISCO_COMMUNITY: ${{ secrets.SNMP_LAB_CISCO_COMMUNITY }}
+          SNMP_LAB_ZTE_USER: ${{ secrets.SNMP_LAB_ZTE_USER }}
+          SNMP_LAB_ZTE_AUTH: ${{ secrets.SNMP_LAB_ZTE_AUTH }}
+          SNMP_LAB_ZTE_PRIV: ${{ secrets.SNMP_LAB_ZTE_PRIV }}
+          SNMP_LAB_VSOL_COMMUNITY: ${{ secrets.SNMP_LAB_VSOL_COMMUNITY }}
+          SNMP_LAB_MIKROTIK_COMMUNITY: ${{ secrets.SNMP_LAB_MIKROTIK_COMMUNITY }}
+          SNMP_LAB_CAMBIUM_USER: ${{ secrets.SNMP_LAB_CAMBIUM_USER }}
+          SNMP_LAB_JUNIPER_USER: ${{ secrets.SNMP_LAB_JUNIPER_USER }}
+          SNMP_LAB_JUNIPER_AUTH: ${{ secrets.SNMP_LAB_JUNIPER_AUTH }}
+          SNMP_LAB_VBNG_COMMUNITY: ${{ secrets.SNMP_LAB_VBNG_COMMUNITY }}
+          SNMP_LAB_SERVERS_COMMUNITY: ${{ secrets.SNMP_LAB_SERVERS_COMMUNITY }}
+          SNMP_LAB_OLT_USER: ${{ secrets.SNMP_LAB_OLT_USER }}
+          SNMP_LAB_OLT_AUTH: ${{ secrets.SNMP_LAB_OLT_AUTH }}
+          SNMP_LAB_OLT_PRIV: ${{ secrets.SNMP_LAB_OLT_PRIV }}
+          HYDRANMS_PON_COUNT_OID: ${{ secrets.HYDRANMS_PON_COUNT_OID }}
+          HYDRANMS_ONU_COUNT_OID: ${{ secrets.HYDRANMS_ONU_COUNT_OID }}
+          HYDRANMS_RX_POWER_ROOT: ${{ secrets.HYDRANMS_RX_POWER_ROOT }}
+          HYDRANMS_TX_POWER_ROOT: ${{ secrets.HYDRANMS_TX_POWER_ROOT }}
+        run: pnpm --filter @workspace/scripts run snmp:release
+
+      - name: Copy matrix summary for retention
+        if: always()
+        run: |
+          set -eu
+          if [ -f "$GITHUB_STEP_SUMMARY" ]; then
+            cp "$GITHUB_STEP_SUMMARY" "$RUNNER_TEMP/snmp-lab-summary.md"
+          else
+            printf '%s\n' 'SNMP matrix did not produce a summary.' > "$RUNNER_TEMP/snmp-lab-summary.md"
+          fi
+
+      - name: Retain matrix summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snmp-lab-matrix-summary
+          path: ${{ runner.temp }}/snmp-lab-summary.md
+          if-no-files-found: error
+          retention-days: 30

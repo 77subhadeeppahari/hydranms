@@ -1,0 +1,18 @@
+{
+  "name": "@workspace/scripts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "hello": "tsx ./src/hello.ts",
+    "snmp:matrix": "tsx ../artifacts/api-server/src/lib/snmp-matrix.ts",
+    "snmp:preflight": "pnpm run snmp:matrix -- --config ../artifacts/api-server/docs/snmp-lab.matrix.example.json",
+    "snmp:lab": "pnpm run snmp:matrix -- --config ${SNMP_MATRIX_CONFIG:-../artifacts/api-server/docs/snmp-lab.matrix.example.json} --live",
+    "snmp:release": "pnpm run snmp:matrix -- --config ${SNMP_MATRIX_CONFIG:?SNMP_MATRIX_CONFIG is required for release runs} --live --release",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsx": "catalog:"
+  }
+}

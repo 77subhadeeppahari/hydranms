@@ -1,0 +1,1835 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: HydraNMS multi-tenant network monitoring API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: dashboard
+    description: NMS overview and operational summaries
+  - name: devices
+    description: SNMP-managed devices and discovery
+  - name: alerts
+    description: Availability and threshold alerts
+  - name: companies
+    description: Tenant companies and onboarding
+  - name: billing
+    description: Plans, checkout, and portal licensing
+  - name: support
+    description: Support tickets and support PIN workflow
+  - name: contact
+    description: Public contact inquiries
+  - name: auth
+    description: HydraNMS own user management
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /contact:
+    post:
+      operationId: submitContactMessage
+      tags: [contact]
+      summary: Send a public contact message to the HydraNMS team
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContactSubmissionInput"
+      responses:
+        "201":
+          description: Contact message accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactSubmissionResponse"
+        "400":
+          description: Invalid contact message
+        "429":
+          description: Contact rate limit exceeded
+  /admin/contact-submissions:
+    get:
+      operationId: getContactSubmissions
+      tags: [contact]
+      summary: List contact inquiries for super-admin review
+      responses:
+        "200":
+          description: Contact inquiries ordered from newest to oldest
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactSubmissions"
+        "401":
+          description: Authentication required
+        "403":
+          description: Super-admin access required
+  /admin/contact-submissions/cleanup:
+    post:
+      operationId: purgeContactSubmissions
+      tags: [contact]
+      summary: Purge contact inquiries past the retention period
+      description: Deletes contact inquiries older than the 180-day retention period. Inquiries at or newer than the cutoff are retained.
+      responses:
+        "200":
+          description: Retention cleanup result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactSubmissionCleanup"
+        "401":
+          description: Authentication required
+        "403":
+          description: Super-admin access required
+        "400":
+          description: Cleanup failed
+  /admin/contact-submissions/{submissionId}:
+    patch:
+      operationId: updateContactSubmission
+      tags: [contact]
+      summary: Update contact inquiry review state
+      parameters:
+        - name: submissionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContactSubmissionUpdate"
+      responses:
+        "200":
+          description: Updated contact inquiry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactSubmission"
+        "400":
+          description: Invalid review state
+        "401":
+          description: Authentication required
+        "403":
+          description: Super-admin access required
+        "404":
+          description: Contact inquiry not found
+  /dashboard:
+    get:
+      operationId: getDashboard
+      tags: [dashboard]
+      summary: Get tenant operations summary
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dashboard"
+  /admin/dashboard:
+    get:
+      operationId: getAdminDashboard
+      tags: [dashboard]
+      summary: Get super-admin platform summary
+      responses:
+        "200":
+          description: Super-admin aggregate dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminDashboard"
+  /devices:
+    get:
+      operationId: getDevices
+      tags: [devices]
+      summary: List monitored devices
+      responses:
+        "200":
+          description: Device inventory
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Device"
+    post:
+      operationId: createDevice
+      tags: [devices]
+      summary: Add a device for SNMP polling
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceInput"
+      responses:
+        "201":
+          description: Device created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+  /devices/{deviceId}:
+    delete:
+      operationId: deleteDevice
+      tags: [devices]
+      summary: Permanently delete a monitored device and its telemetry
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Device deleted
+        "404":
+          description: Device not found in the active company
+  /devices/{deviceId}/details:
+    get:
+      operationId: getDeviceDetails
+      tags: [devices]
+      summary: Get interface and ONU telemetry for a monitored device
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Device detail telemetry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceDetails"
+        "404":
+          description: Device not found in the active company
+  /devices/{deviceId}/mib-settings:
+    patch:
+      operationId: updateDeviceMibSettings
+      tags: [devices]
+      summary: Update a device MIB profile and OID overrides
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceMibSettingsInput"
+      responses:
+        "200":
+          description: Updated device configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "404":
+          description: Device not found in the active company
+  /devices/{deviceId}/cli-settings:
+    patch:
+      operationId: updateDeviceCliSettings
+      tags: [devices]
+      summary: Configure SSH and Telnet access for a device
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceCliSettingsInput"
+      responses:
+        "200":
+          description: Updated device CLI configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "404":
+          description: Device not found in the active company
+  /devices/{deviceId}/cli/execute:
+    post:
+      operationId: executeDeviceCliCommand
+      tags: [devices]
+      summary: Execute one command on a device CLI
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceCliCommandInput"
+      responses:
+        "200":
+          description: CLI command output
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceCliCommandResponse"
+        "404":
+          description: Device not found in the active company
+  /devices/{deviceId}/cli/status:
+    get:
+      operationId: getDeviceCliStatus
+      tags: [devices]
+      summary: Check SSH and Telnet reachability for a device
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: SSH and Telnet connection status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceCliStatusResponse"
+        "404":
+          description: Device not found in the active company
+  /devices/history:
+    get:
+      operationId: getDeviceHistory
+      tags: [devices]
+      summary: Get recent interface and ONU telemetry history
+      parameters:
+        - name: deviceId
+          in: query
+          required: true
+          schema: { type: string }
+        - name: window
+          in: query
+          required: false
+          description: Recent history window to return
+          schema:
+            type: string
+            enum: [1h, 6h, 24h, 7d]
+            default: 24h
+      responses:
+        "200":
+          description: Device telemetry history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceHistory"
+        "404":
+          description: Device not found in the active company
+  /devices/discover:
+    post:
+      operationId: discoverDevices
+      tags: [devices]
+      summary: Discover devices on a network range
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DiscoveryInput"
+      responses:
+        "202":
+          description: Discovery job accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscoveryJob"
+  /alerts:
+    get:
+      operationId: getAlerts
+      tags: [alerts]
+      summary: List recent alerts
+      responses:
+        "200":
+          description: Recent alert events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Alert"
+  /settings/alerts:
+    get:
+      operationId: getAlertSettings
+      tags: [alerts]
+      summary: Read company alert channel settings
+      responses:
+        "200":
+          description: Alert channel settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertSettings"
+    patch:
+      operationId: updateAlertSettings
+      tags: [alerts]
+      summary: Update company alert channel settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertSettingsInput"
+      responses:
+        "200":
+          description: Updated alert channel settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertSettings"
+  /settings/alerts/telegram/test:
+    post:
+      operationId: testTelegramAlert
+      tags: [alerts]
+      summary: Verify the configured Telegram bot and recipient
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TelegramTestInput"
+      responses:
+        "200":
+          description: Telegram test message sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TelegramTestResponse"
+  /companies:
+    get:
+      operationId: getCompanies
+      tags: [companies]
+      summary: List companies for super-admin
+      responses:
+        "200":
+          description: Company tenants
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Company"
+    post:
+      operationId: createCompany
+      tags: [companies]
+      summary: Register a company tenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompanyInput"
+      responses:
+        "201":
+          description: Company registration created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+  /companies/{companyId}:
+    patch:
+      operationId: updateCompany
+      tags: [companies]
+      summary: Update a company tenant profile
+      parameters:
+        - name: companyId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompanyInput"
+      responses:
+        "200":
+          description: Updated company tenant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+    delete:
+      operationId: deleteCompany
+      tags: [companies]
+      summary: Permanently delete a company tenant
+      parameters:
+        - name: companyId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Company tenant deleted
+  /company/profile:
+    get:
+      operationId: getCompanyProfile
+      tags: [companies]
+      summary: Get the signed-in tenant company profile
+      responses:
+        "200":
+          description: Current tenant company profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+    patch:
+      operationId: updateCompanyProfile
+      tags: [companies]
+      summary: Update the signed-in tenant company profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompanyProfileInput"
+      responses:
+        "200":
+          description: Updated tenant company profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+  /company/profile/ping:
+    post:
+      operationId: checkCompanyProfilePing
+      tags: [companies]
+      summary: Check reachability for an IP address from the tenant workspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompanyProfilePingInput"
+      responses:
+        "200":
+          description: Ping result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompanyProfilePingResponse"
+  /admin/company-profile:
+    get:
+      operationId: getAdminCompanyProfile
+      tags: [billing]
+      summary: Get the super-admin company billing profile
+      responses:
+        "200":
+          description: Super-admin company details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformCompanyProfile"
+    patch:
+      operationId: updateAdminCompanyProfile
+      tags: [billing]
+      summary: Update the super-admin company billing profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlatformCompanyProfileInput"
+      responses:
+        "200":
+          description: Updated super-admin company details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformCompanyProfile"
+  /storage/uploads/request-url:
+    post:
+      operationId: requestStorageUploadUrl
+      tags: [billing]
+      summary: Request a protected object-storage upload URL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StorageUploadInput"
+      responses:
+        "200":
+          description: Signed upload URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageUploadResponse"
+  /company/users:
+    get:
+      operationId: getCompanyUsers
+      tags: [companies]
+      summary: List users in the signed-in tenant company
+      responses:
+        "200":
+          description: Company users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CompanyUser"
+    post:
+      operationId: createCompanyUser
+      tags: [companies]
+      summary: Add a user to the signed-in tenant company
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCompanyUserInput"
+      responses:
+        "201":
+          description: Company user created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompanyUser"
+  /company/users/{userId}:
+    patch:
+      operationId: updateCompanyUser
+      tags: [companies]
+      summary: Update a user in the signed-in tenant company
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCompanyUserInput"
+      responses:
+        "200":
+          description: Company user updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompanyUser"
+  /company/audit-log:
+    get:
+      operationId: getCompanyAuditLog
+      tags: [auth]
+      summary: List user and company activity for the signed-in tenant
+      responses:
+        "200":
+          description: Tenant audit log
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditLog"
+  /companies/poller-log:
+    get:
+      operationId: getCompanyPollerLog
+      tags: [companies, devices]
+      summary: List recent poller activity for a company
+      parameters:
+        - name: companyId
+          in: query
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+      responses:
+        "200":
+          description: Recent company poller activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PollerLog"
+        "403":
+          description: Super-admin access required
+  /companies/{companyId}/license:
+    patch:
+      operationId: updateCompanyLicense
+      tags: [companies, billing]
+      summary: Update a tenant license as a super-admin
+      parameters:
+        - name: companyId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LicenseUpdateInput"
+      responses:
+        "200":
+          description: Updated license
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/License"
+  /plans:
+    get:
+      operationId: getPlans
+      tags: [billing]
+      summary: List subscription plans
+      responses:
+        "200":
+          description: Available plans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Plan"
+    post:
+      operationId: createPlan
+      tags: [billing]
+      summary: Create a subscription plan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlanInput"
+      responses:
+        "201":
+          description: Created subscription plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+  /plans/{planId}:
+    patch:
+      operationId: updatePlan
+      tags: [billing]
+      summary: Update a subscription plan
+      parameters:
+        - name: planId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlanInput"
+      responses:
+        "200":
+          description: Updated subscription plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+  /billing/checkout:
+    post:
+      operationId: createCheckout
+      tags: [billing]
+      summary: Create an AblePay checkout session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CheckoutInput"
+      responses:
+        "200":
+          description: Checkout session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckoutSession"
+  /billing/webhooks/ablepay:
+    post:
+      operationId: receiveAblePayWebhook
+      tags: [billing]
+      summary: Receive a signed AblePay payment event
+      responses:
+        "200":
+          description: Event accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookReceipt"
+  /billing/license:
+    get:
+      operationId: getLicense
+      tags: [billing]
+      summary: Get the active portal license
+      responses:
+        "200":
+          description: Active license
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/License"
+  /billing/payments:
+    get:
+      operationId: getPaymentRecords
+      tags: [billing]
+      summary: Get tenant payment and invoice history
+      responses:
+        "200":
+          description: Tenant-scoped payment and invoice history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentRecordList"
+  /admin/notifications:
+    get:
+      operationId: getNotificationDeliveries
+      tags: [billing]
+      summary: Search notification delivery history
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: status
+          in: query
+          schema: { type: string, enum: [queued, sending, sent, failed] }
+        - name: channel
+          in: query
+          schema: { type: string, enum: [email, telegram, ticket_telegram] }
+        - name: eventType
+          in: query
+          schema: { type: string }
+        - name: recipient
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Bounded, paginated notification delivery history
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationDeliveryHistory"
+  /admin/notifications/{id}:
+    get:
+      operationId: getNotificationDelivery
+      tags: [billing]
+      summary: Inspect one notification delivery attempt
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Notification delivery attempt details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationDelivery"
+        "404":
+          description: Delivery not found
+  /admin/notifications/{id}/retry:
+    post:
+      operationId: retryNotification
+      tags: [billing]
+      summary: Retry a failed notification delivery
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Retry result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetryNotification"
+        "409":
+          description: Delivery has exhausted its retry budget
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error: { type: string }
+  /admin/billing/webhook-events:
+    get:
+      operationId: getPaymentWebhookEvents
+      tags: [billing]
+      summary: List payment webhook processing events
+      responses:
+        "200":
+          description: Payment webhook events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PaymentWebhookEvent"
+  /support/tickets:
+    get:
+      operationId: getSupportTickets
+      tags: [support]
+      summary: List support tickets
+      responses:
+        "200":
+          description: Support tickets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SupportTicket"
+    post:
+      operationId: createSupportTicket
+      tags: [support]
+      summary: Create a support ticket with a support PIN
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SupportTicketInput"
+      responses:
+        "201":
+          description: Support ticket created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportTicket"
+  /tickets:
+    get:
+      operationId: getIncidentTickets
+      tags: [support]
+      summary: List company incident tickets
+      responses:
+        "200":
+          description: Incident tickets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IncidentTicket"
+    post:
+      operationId: createIncidentTicket
+      tags: [support]
+      summary: Create a manual incident ticket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IncidentTicketInput"
+      responses:
+        "201":
+          description: Incident ticket created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IncidentTicket"
+  /tickets/{ticketId}/resolve:
+    patch:
+      operationId: resolveIncidentTicket
+      tags: [support]
+      summary: Resolve a company incident ticket
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Incident ticket resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IncidentTicket"
+  /auth/register:
+    post:
+      operationId: registerUser
+      tags: [auth]
+      summary: Register a portal owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterInput"
+      responses:
+        "201":
+          description: Registered user and company
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegistrationResult"
+  /auth/login:
+    post:
+      operationId: loginUser
+      tags: [auth]
+      summary: Log in with email or username
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Authenticated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserSession"
+  /auth/logout:
+    post:
+      operationId: logoutUser
+      tags: [auth]
+      summary: Log out the current session
+      responses:
+        "204":
+          description: Current session revoked and cookie cleared
+  /auth/profile:
+    get:
+      operationId: getUserProfile
+      tags: [auth]
+      summary: Get the signed-in user's profile
+      responses:
+        "200":
+          description: Signed-in user profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+    patch:
+      operationId: updateUserProfile
+      tags: [auth]
+      summary: Update the signed-in user's profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserProfileInput"
+      responses:
+        "200":
+          description: Updated user profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+  /auth/profile/password:
+    patch:
+      operationId: changeUserPassword
+      tags: [auth]
+      summary: Change the signed-in user's password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordInput"
+      responses:
+        "200":
+          description: Password changed and a fresh session issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasswordChangeResponse"
+  /auth/sessions/revoke:
+    post:
+      operationId: revokeUserSessions
+      tags: [auth]
+      summary: Revoke all sessions for the current user
+      responses:
+        "204":
+          description: All sessions revoked and cookie cleared
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    Dashboard:
+      type: object
+      required: [companyName, subdomain, uptime, totalDevices, onlineDevices, openAlerts, deviceBreakdown, uptimeSeries]
+      properties:
+        companyName: { type: string }
+        subdomain: { type: string }
+        uptime: { type: number }
+        totalDevices: { type: integer }
+        onlineDevices: { type: integer }
+        openAlerts: { type: integer }
+        deviceBreakdown:
+          type: array
+          items: { $ref: "#/components/schemas/DeviceBreakdown" }
+        uptimeSeries:
+          type: array
+          items: { $ref: "#/components/schemas/UptimePoint" }
+    AdminDashboard:
+      type: object
+      required: [totalCompanies, totalBilling, totalDevices, pendingSupportTickets, pendingContactInquiries]
+      properties:
+        totalCompanies: { type: integer }
+        totalBilling: { type: number }
+        totalDevices: { type: integer }
+        pendingSupportTickets: { type: integer }
+        pendingContactInquiries: { type: integer }
+    DeviceBreakdown:
+      type: object
+      required: [label, count, color]
+      properties:
+        label: { type: string }
+        count: { type: integer }
+        color: { type: string }
+    UptimePoint:
+      type: object
+      required: [label, value]
+      properties:
+        label: { type: string }
+        value: { type: number }
+    Device:
+      type: object
+      required: [id, name, ipAddress, vendor, type, status, uptime, lastSeen, location, mibProfile, ponCountOid, onuCountOid, rxPowerRoot, txPowerRoot, ponCount, onuCount, rxPower, txPower, sysUpTimeSeconds, systemVersion, ramPercent, diskPercent, interfaceCount, lastPollAt, cliConfigured, cliProtocol, sshPort, telnetPort, cliUsername]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        ipAddress: { type: string }
+        vendor: { type: string }
+        type: { type: string }
+        status: { type: string, enum: [online, warning, offline, discovering] }
+        uptime: { type: number }
+        lastSeen: { type: string }
+        location: { type: string }
+        mibProfile: { type: ["string", "null"] }
+        ponCountOid: { type: ["string", "null"] }
+        onuCountOid: { type: ["string", "null"] }
+        rxPowerRoot: { type: ["string", "null"] }
+        txPowerRoot: { type: ["string", "null"] }
+        ponCount: { type: ["integer", "null"] }
+        onuCount: { type: ["integer", "null"] }
+        rxPower: { type: ["number", "null"] }
+        txPower: { type: ["number", "null"] }
+        sysUpTimeSeconds: { type: ["number", "null"] }
+        systemVersion: { type: ["string", "null"] }
+        ramPercent: { type: ["number", "null"] }
+        diskPercent: { type: ["number", "null"] }
+        interfaceCount: { type: integer }
+        lastPollAt: { type: ["string", "null"], format: date-time }
+        cliConfigured: { type: boolean }
+        cliProtocol: { type: ["string", "null"], enum: [ssh, telnet, both, null] }
+        sshPort: { type: ["integer", "null"] }
+        telnetPort: { type: ["integer", "null"] }
+        cliUsername: { type: ["string", "null"] }
+    DeviceInterface:
+      type: object
+      required: [id, deviceId, ifIndex, name, alias, adminStatus, operStatus, speedMbps, rxBytes, txBytes, sfpVendor, sfpSerialNumber, opticalRxPower, opticalTxPower, updatedAt, seriesKey]
+      properties:
+        id: { type: string }
+        deviceId: { type: string }
+        ifIndex: { type: integer }
+        seriesKey:
+          type: string
+          description: Stable interface identity for selecting a history series
+        name: { type: string }
+        alias: { type: ["string", "null"] }
+        adminStatus: { type: ["string", "null"] }
+        operStatus: { type: ["string", "null"] }
+        speedMbps: { type: ["number", "null"] }
+        rxBytes: { type: ["string", "null"] }
+        txBytes: { type: ["string", "null"] }
+        sfpVendor: { type: ["string", "null"] }
+        sfpSerialNumber: { type: ["string", "null"] }
+        opticalRxPower: { type: ["number", "null"], description: Optical receive power in dBm }
+        opticalTxPower: { type: ["number", "null"], description: Optical transmit power in dBm }
+        updatedAt: { type: string, format: date-time }
+    PonTelemetry:
+      type: object
+      required: [id, deviceId, ponIndex, onuIndex, rxPower, txPower, updatedAt, seriesKey]
+      properties:
+        id: { type: string }
+        deviceId: { type: string }
+        ponIndex: { type: integer }
+        onuIndex: { type: integer }
+        seriesKey:
+          type: string
+          description: Stable ONU identity for selecting a history series
+        rxPower: { type: ["number", "null"] }
+        txPower: { type: ["number", "null"] }
+        updatedAt: { type: string, format: date-time }
+    DeviceInterfaceSample:
+      type: object
+      required: [id, deviceId, ifIndex, name, rxBytes, txBytes, sampledAt, seriesKey]
+      properties:
+        id: { type: string }
+        deviceId: { type: string }
+        ifIndex: { type: integer }
+        seriesKey:
+          type: string
+          description: Stable interface identity for selecting a history series
+        name: { type: string }
+        rxBytes: { type: ["string", "null"] }
+        txBytes: { type: ["string", "null"] }
+        sampledAt: { type: string, format: date-time }
+    PonTelemetrySample:
+      type: object
+      required: [id, deviceId, ponIndex, onuIndex, rxPower, txPower, sampledAt, seriesKey]
+      properties:
+        id: { type: string }
+        deviceId: { type: string }
+        ponIndex: { type: integer }
+        onuIndex: { type: integer }
+        seriesKey:
+          type: string
+          description: Stable ONU identity for selecting a history series
+        rxPower: { type: ["number", "null"] }
+        txPower: { type: ["number", "null"] }
+        sampledAt: { type: string, format: date-time }
+    DeviceDetails:
+      type: object
+      required: [device, interfaces, ponTelemetry]
+      properties:
+        device:
+          $ref: "#/components/schemas/Device"
+        interfaces:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeviceInterface"
+        ponTelemetry:
+          type: array
+          items:
+            $ref: "#/components/schemas/PonTelemetry"
+    DeviceHistory:
+      type: object
+      required: [interfaceHistory, opticalHistory, historyWindow]
+      properties:
+        interfaceHistory:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeviceInterfaceSample"
+        opticalHistory:
+          type: array
+          items:
+            $ref: "#/components/schemas/PonTelemetrySample"
+        historyWindow:
+          type: string
+          enum: [1h, 6h, 24h, 7d]
+    DeviceInput:
+      type: object
+      required: [name, ipAddress, vendor, type, location]
+      properties:
+        name: { type: string, minLength: 1 }
+        ipAddress: { type: string, minLength: 1 }
+        vendor: { type: string, minLength: 1 }
+        type: { type: string, minLength: 1 }
+        location: { type: string, minLength: 1 }
+        snmpVersion: { type: string, enum: [v1, v2c, v3] }
+        snmpCommunity: { type: ["string", "null"] }
+        snmpCredentialLabel: { type: string, minLength: 1 }
+        snmpUsername: { type: ["string", "null"] }
+        snmpAuthProtocol: { type: string, enum: [md5, sha, sha224, sha256, sha384, sha512] }
+        snmpAuthPassword: { type: ["string", "null"] }
+        snmpPrivProtocol: { type: string, enum: [des, aes, aes256b, aes256r] }
+        snmpPrivPassword: { type: ["string", "null"] }
+        snmpSecurityLevel: { type: string, enum: [noAuthNoPriv, authNoPriv, authPriv] }
+        mibProfile: { type: ["string", "null"] }
+        ponCountOid: { type: ["string", "null"] }
+        onuCountOid: { type: ["string", "null"] }
+        rxPowerRoot: { type: ["string", "null"] }
+        txPowerRoot: { type: ["string", "null"] }
+    DeviceMibSettingsInput:
+      type: object
+      required: [mibProfile, ponCountOid, onuCountOid, rxPowerRoot, txPowerRoot]
+      properties:
+        mibProfile: { type: ["string", "null"] }
+        ponCountOid: { type: ["string", "null"] }
+        onuCountOid: { type: ["string", "null"] }
+        rxPowerRoot: { type: ["string", "null"] }
+        txPowerRoot: { type: ["string", "null"] }
+    DeviceCliSettingsInput:
+      type: object
+      required: [cliProtocol, sshPort, telnetPort, cliUsername, cliPassword]
+      properties:
+        cliProtocol: { type: string, enum: [ssh, telnet, both] }
+        sshPort: { type: integer, minimum: 1, maximum: 65535 }
+        telnetPort: { type: integer, minimum: 1, maximum: 65535 }
+        cliUsername: { type: string, minLength: 1 }
+        cliPassword: { type: string, minLength: 1 }
+    DeviceCliCommandInput:
+      type: object
+      required: [protocol, command]
+      properties:
+        protocol: { type: string, enum: [ssh, telnet] }
+        command: { type: string, minLength: 1, maxLength: 2000 }
+    DeviceCliCommandResponse:
+      type: object
+      required: [protocol, command, output, durationMs]
+      properties:
+        protocol: { type: string, enum: [ssh, telnet] }
+        command: { type: string }
+        output: { type: string }
+        durationMs: { type: integer }
+    DeviceCliStatus:
+      type: object
+      required: [state, latencyMs]
+      properties:
+        state: { type: string, enum: [reachable, unreachable, not_configured] }
+        latencyMs: { type: ["integer", "null"] }
+    DeviceCliStatusResponse:
+      type: object
+      required: [ssh, telnet]
+      properties:
+        ssh: { $ref: "#/components/schemas/DeviceCliStatus" }
+        telnet: { $ref: "#/components/schemas/DeviceCliStatus" }
+    DiscoveryInput:
+      type: object
+      required: [network, snmpVersion, credentialLabel]
+      properties:
+        network: { type: string, minLength: 1 }
+        snmpVersion: { type: string, enum: [v1, v2c, v3] }
+        credentialLabel: { type: string, minLength: 1 }
+    DiscoveryJob:
+      type: object
+      required: [id, status, network, discoveredCount]
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [queued, running, completed] }
+        network: { type: string }
+        discoveredCount: { type: integer }
+    Alert:
+      type: object
+      required: [id, severity, eventType, title, deviceName, message, time, acknowledged]
+      properties:
+        id: { type: string }
+        severity: { type: string, enum: [critical, warning, info] }
+        eventType:
+          type: string
+          enum: [device.down, device.recovered, threshold.breached, port.up, port.down, sfp.removed, sfp.rx.changed, sfp.tx.changed]
+        title: { type: string }
+        deviceName: { type: string }
+        message: { type: string }
+        time: { type: string }
+        acknowledged: { type: boolean }
+    Company:
+      type: object
+      required: [id, name, subdomain, email, status, devices, plan, renewalDate, licenseNumber, licenseStatus, licenseValidity]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        subdomain: { type: string }
+        email: { type: string }
+        contactNumber: { type: string }
+        gstNumber: { type: ["string", "null"] }
+        address: { type: string }
+        status: { type: string, enum: [active, pending, suspended] }
+        devices: { type: integer }
+        plan: { type: string }
+        renewalDate: { type: string }
+        licenseNumber: { type: string }
+        licenseStatus: { type: string, enum: [active, expiring, expired] }
+        licenseValidity: { type: string }
+    CompanyInput:
+      type: object
+      required: [name, subdomain, email, contactNumber, address]
+      properties:
+        name: { type: string, minLength: 1 }
+        subdomain: { type: string, minLength: 3 }
+        email: { type: string, format: email }
+        contactNumber: { type: string, minLength: 6 }
+        gstNumber: { type: ["string", "null"] }
+        address: { type: string, minLength: 1 }
+    CompanyProfileInput:
+      type: object
+      required: [name, email, contactNumber, address]
+      properties:
+        name: { type: string, minLength: 1 }
+        email: { type: string, format: email }
+        contactNumber: { type: string, minLength: 6 }
+        gstNumber: { type: ["string", "null"] }
+        address: { type: string, minLength: 1 }
+    CompanyProfilePingInput:
+      type: object
+      required: [ip]
+      properties:
+        ip: { type: string, minLength: 7, maxLength: 15 }
+    CompanyProfilePingResponse:
+      type: object
+      required: [ip, state, latencyMs, packetsSent, packetsReceived, packetLossPercent, checkedAt, message]
+      properties:
+        ip: { type: string }
+        state: { type: string, enum: [reachable, unreachable, unavailable] }
+        latencyMs: { type: ["number", "null"] }
+        packetsSent: { type: integer }
+        packetsReceived: { type: integer }
+        packetLossPercent: { type: number }
+        checkedAt: { type: string, format: date-time }
+        message: { type: string }
+    AuditLog:
+      type: object
+      required: [id, companyId, actorUserId, actorName, actorUsername, action, targetType, targetId, metadata, createdAt]
+      properties:
+        id: { type: string }
+        companyId: { type: ["string", "null"] }
+        actorUserId: { type: ["string", "null"] }
+        actorName: { type: ["string", "null"] }
+        actorUsername: { type: ["string", "null"] }
+        action: { type: string }
+        targetType: { type: string }
+        targetId: { type: ["string", "null"] }
+        metadata:
+          type: object
+          additionalProperties: true
+        createdAt: { type: string, format: date-time }
+    PollerLog:
+      type: object
+      required: [id, companyId, deviceId, deviceName, ipAddress, status, durationMs, error, createdAt]
+      properties:
+        id: { type: string }
+        companyId: { type: string }
+        deviceId: { type: string }
+        deviceName: { type: string }
+        ipAddress: { type: string }
+        status: { type: string, enum: [success, failed] }
+        durationMs: { type: ["integer", "null"] }
+        error: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+    PlatformCompanyProfile:
+      type: object
+      required: [companyName, address, gstNumber, phoneNumber, email, logoPath]
+      properties:
+        companyName: { type: string }
+        address: { type: string }
+        gstNumber: { type: ["string", "null"] }
+        phoneNumber: { type: string }
+        email: { type: string }
+        logoPath: { type: ["string", "null"] }
+    PlatformCompanyProfileInput:
+      type: object
+      required: [companyName, address, phoneNumber, email]
+      properties:
+        companyName: { type: string, minLength: 1 }
+        address: { type: string, minLength: 1 }
+        gstNumber: { type: ["string", "null"] }
+        phoneNumber: { type: string, minLength: 6 }
+        email: { type: string, format: email }
+        logoPath: { type: ["string", "null"] }
+    StorageUploadInput:
+      type: object
+      required: [name, size, contentType]
+      properties:
+        name: { type: string, minLength: 1 }
+        size: { type: integer, minimum: 1 }
+        contentType: { type: string, minLength: 1 }
+        purpose:
+          type: string
+          enum: [company_logo, profile]
+          default: company_logo
+    StorageUploadResponse:
+      type: object
+      required: [uploadURL, objectPath]
+      properties:
+        uploadURL: { type: string, format: uri }
+        objectPath: { type: string }
+    Plan:
+      type: object
+      required: [id, name, price, interval, deviceLimit, features, popular]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        price: { type: number }
+        interval: { type: string, enum: [monthly, yearly] }
+        deviceLimit: { type: integer }
+        features:
+          type: array
+          items: { type: string }
+        popular: { type: boolean }
+    PlanInput:
+      type: object
+      required: [id, name, price, interval, deviceLimit, features, popular]
+      properties:
+        id: { type: string, minLength: 1 }
+        name: { type: string, minLength: 1 }
+        price: { type: integer, minimum: 100 }
+        interval: { type: string, enum: [monthly, yearly] }
+        deviceLimit: { type: integer, minimum: 1 }
+        features:
+          type: array
+          items: { type: string }
+        popular: { type: boolean }
+    CheckoutInput:
+      type: object
+      required: [planId]
+      properties:
+        planId: { type: string }
+        companyId: { type: ["string", "null"] }
+    CheckoutSession:
+      type: object
+      required: [id, provider, status, amount, subtotal, gstRate, gstAmount, currency]
+      properties:
+        id: { type: string }
+        provider: { type: string, enum: [ablepay] }
+        status: { type: string, enum: [created, pending, paid] }
+        amount: { type: number }
+        subtotal: { type: number }
+        gstRate: { type: number }
+        gstAmount: { type: number }
+        currency: { type: string }
+        checkoutUrl: { type: ["string", "null"] }
+    License:
+      type: object
+      required: [key, status, plan, expiresAt, deviceLimit, issuedTo]
+      properties:
+        key: { type: string }
+        status: { type: string, enum: [active, expiring, expired] }
+        plan: { type: string }
+        expiresAt: { type: string }
+        deviceLimit: { type: integer }
+        issuedTo: { type: string }
+    PaymentRecord:
+      type: object
+      required: [id, status, provider, amount, subtotal, gstRate, gstAmount, currency, planId, planName, planPrice, planInterval, planDeviceLimit, invoiceNumber, gatewayReference, bankUrn, createdAt, paidAt]
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [pending, paid, failed] }
+        provider: { type: string }
+        amount: { type: number }
+        subtotal: { type: number }
+        gstRate: { type: number }
+        gstAmount: { type: number }
+        currency: { type: string }
+        planId: { type: string }
+        planName: { type: string }
+        planPrice: { type: number }
+        planInterval: { type: string, enum: [monthly, yearly] }
+        planDeviceLimit: { type: integer }
+        invoiceNumber: { type: string }
+        gatewayReference: { type: ["string", "null"] }
+        bankUrn: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+        paidAt: { type: ["string", "null"], format: date-time }
+    PaymentRecordList:
+      type: array
+      items:
+        $ref: "#/components/schemas/PaymentRecord"
+    LicenseUpdateInput:
+      type: object
+      required: [status, planId, expiresAt]
+      properties:
+        status: { type: string, enum: [active, expiring, expired] }
+        planId: { type: string }
+        expiresAt: { type: string, format: date }
+    AlertSettings:
+      type: object
+      required: [emailEnabled, emailAddress, telegramEnabled, telegramChatId, ticketTelegramEnabled, ticketTelegramChatId, rxPowerLowThreshold, rxPowerHighThreshold, txPowerLowThreshold, txPowerHighThreshold, emailProviderConfigured, telegramProviderConfigured, ticketTelegramProviderConfigured]
+      properties:
+        emailEnabled: { type: boolean }
+        emailAddress: { type: ["string", "null"], format: email }
+        telegramEnabled: { type: boolean }
+        telegramChatId: { type: ["string", "null"] }
+        ticketTelegramEnabled: { type: boolean }
+        ticketTelegramChatId: { type: ["string", "null"] }
+        rxPowerLowThreshold: { type: ["number", "null"] }
+        rxPowerHighThreshold: { type: ["number", "null"] }
+        txPowerLowThreshold: { type: ["number", "null"] }
+        txPowerHighThreshold: { type: ["number", "null"] }
+        emailProviderConfigured: { type: boolean }
+        telegramProviderConfigured: { type: boolean }
+        ticketTelegramProviderConfigured: { type: boolean }
+    AlertSettingsInput:
+      type: object
+      required: [emailEnabled, telegramEnabled]
+      properties:
+        emailEnabled: { type: boolean }
+        emailAddress: { type: ["string", "null"], format: email }
+        telegramEnabled: { type: boolean }
+        telegramChatId: { type: ["string", "null"] }
+        telegramBotToken: { type: ["string", "null"], minLength: 1 }
+        ticketTelegramEnabled: { type: boolean }
+        ticketTelegramChatId: { type: ["string", "null"] }
+        ticketTelegramBotToken: { type: ["string", "null"], minLength: 1 }
+        rxPowerLowThreshold: { type: ["number", "null"] }
+        rxPowerHighThreshold: { type: ["number", "null"] }
+        txPowerLowThreshold: { type: ["number", "null"] }
+        txPowerHighThreshold: { type: ["number", "null"] }
+    TelegramTestInput:
+      type: object
+      required: [chatId]
+      properties:
+        chatId: { type: string, minLength: 1 }
+        botToken: { type: ["string", "null"], minLength: 1 }
+    TelegramTestResponse:
+      type: object
+      required: [ok, botUsername, botName, providerMessageId]
+      properties:
+        ok: { type: boolean }
+        botUsername: { type: ["string", "null"] }
+        botName: { type: string }
+        providerMessageId: { type: ["string", "null"] }
+    NotificationDelivery:
+      type: object
+      required: [id, companyId, channel, eventType, recipient, status, attempts, maxAttempts, nextAttemptAt, retryable, lastError, providerMessageId, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        companyId: { type: ["string", "null"] }
+        channel: { type: string, enum: [email, telegram, ticket_telegram] }
+        eventType: { type: string }
+        recipient: { type: string }
+        status: { type: string, enum: [queued, sending, sent, failed] }
+        attempts: { type: integer }
+        maxAttempts: { type: integer }
+        nextAttemptAt: { type: string, format: date-time }
+        retryable: { type: boolean }
+        lastError: { type: ["string", "null"] }
+        providerMessageId: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    NotificationDeliveryHistory:
+      type: object
+      required: [items, page, pageSize, total, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/NotificationDelivery"
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer }
+        hasMore: { type: boolean }
+    RetryNotification:
+      type: object
+      required: [id, status]
+      properties:
+        id: { type: string }
+        status: { type: string }
+    PaymentWebhookEvent:
+      type: object
+      required: [id, provider, eventId, eventType, status, error, attempts, receivedAt, processedAt]
+      properties:
+        id: { type: string }
+        provider: { type: string }
+        eventId: { type: string }
+        eventType: { type: string }
+        status: { type: string }
+        error: { type: ["string", "null"] }
+        attempts: { type: integer }
+        receivedAt: { type: string, format: date-time }
+        processedAt: { type: ["string", "null"], format: date-time }
+    WebhookReceipt:
+      type: object
+      required: [received]
+      properties:
+        received: { type: boolean }
+        duplicate: { type: boolean }
+    SupportTicket:
+      type: object
+      required: [id, subject, status, priority, createdAt, lastUpdated]
+      properties:
+        id: { type: string }
+        subject: { type: string }
+        status: { type: string, enum: [open, in_progress, resolved] }
+        priority: { type: string, enum: [low, medium, high, urgent] }
+        createdAt: { type: string }
+        lastUpdated: { type: string }
+        supportPin: { type: ["string", "null"] }
+    SupportTicketInput:
+      type: object
+      required: [subject, priority, message]
+      properties:
+        subject: { type: string, minLength: 1 }
+        priority: { type: string, enum: [low, medium, high, urgent] }
+        message: { type: string, minLength: 1 }
+    ContactSubmissionInput:
+      type: object
+      required: [name, email, message]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        email: { type: string, format: email, maxLength: 320 }
+        company: { type: string, maxLength: 160 }
+        message: { type: string, minLength: 1, maxLength: 5000 }
+        website: { type: string, maxLength: 200 }
+    ContactSubmissionResponse:
+      type: object
+      required: [received]
+      properties:
+        received: { type: boolean }
+    ContactSubmission:
+      type: object
+      required: [id, name, email, company, message, receivedAt, handled, internalNote]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string }
+        company: { type: string }
+        message: { type: string }
+        receivedAt: { type: string, format: date-time }
+        handled: { type: boolean }
+        internalNote: { type: ["string", "null"], maxLength: 1000 }
+    ContactSubmissionUpdate:
+      type: object
+      required: [handled]
+      properties:
+        handled: { type: boolean }
+        internalNote: { type: ["string", "null"], maxLength: 1000 }
+    ContactSubmissions:
+      type: array
+      items:
+        $ref: "#/components/schemas/ContactSubmission"
+    ContactSubmissionCleanup:
+      type: object
+      required: [deletedCount, retentionDays, cutoff]
+      properties:
+        deletedCount: { type: integer, minimum: 0 }
+        retentionDays: { type: integer, minimum: 1 }
+        cutoff: { type: string, format: date-time }
+    IncidentTicket:
+      type: object
+      required: [id, companyId, sourceType, deviceId, ifIndex, title, description, priority, status, autoResolved, createdBy, resolvedBy, resolvedAt, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        companyId: { type: string }
+        sourceType: { type: string, enum: [manual, device, port] }
+        deviceId: { type: ["string", "null"] }
+        ifIndex: { type: ["integer", "null"] }
+        title: { type: string }
+        description: { type: string }
+        priority: { type: string, enum: [low, medium, high, critical] }
+        status: { type: string, enum: [open, resolved] }
+        autoResolved: { type: boolean }
+        createdBy: { type: ["string", "null"] }
+        resolvedBy: { type: ["string", "null"] }
+        resolvedAt: { type: ["string", "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    IncidentTicketInput:
+      type: object
+      required: [title, description, priority]
+      properties:
+        title: { type: string, minLength: 1 }
+        description: { type: string, minLength: 1 }
+        priority: { type: string, enum: [low, medium, high, critical] }
+    RegisterInput:
+      type: object
+      required: [username, subdomain, contactNumber, companyName, address, email, password]
+      properties:
+        username: { type: string, minLength: 3 }
+        subdomain: { type: string, minLength: 3 }
+        contactNumber: { type: string, minLength: 6 }
+        companyName: { type: string, minLength: 1 }
+        gstNumber: { type: ["string", "null"] }
+        address: { type: string, minLength: 1 }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+    RegistrationResult:
+      type: object
+      required: [user, company, nextStep]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        company: { $ref: "#/components/schemas/Company" }
+        nextStep: { type: string, enum: [payment] }
+    LoginInput:
+      type: object
+      required: [identifier, password]
+      properties:
+        identifier: { type: string, minLength: 3 }
+        password: { type: string, minLength: 1 }
+    User:
+      type: object
+      required: [id, username, email, role, name, avatarPath]
+      properties:
+        id: { type: string }
+        username: { type: string }
+        email: { type: string }
+        role: { type: string, enum: [super_admin, company_admin, operator] }
+        name: { type: string }
+        avatarPath: { type: ["string", "null"] }
+    UserProfile:
+      type: object
+      required: [id, username, email, role, name, avatarPath]
+      properties:
+        id: { type: string }
+        username: { type: string }
+        email: { type: string }
+        role: { type: string, enum: [super_admin, company_admin, operator] }
+        name: { type: string }
+        avatarPath: { type: ["string", "null"] }
+    UserProfileInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+        avatarPath: { type: ["string", "null"] }
+    ChangePasswordInput:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword: { type: string, minLength: 1 }
+        newPassword: { type: string, minLength: 8 }
+    PasswordChangeResponse:
+      type: object
+      required: [user, token]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        token: { type: string }
+    CompanyUser:
+      type: object
+      required: [id, username, email, role, status, createdAt]
+      properties:
+        id: { type: string }
+        username: { type: string }
+        email: { type: string }
+        role: { type: string, enum: [company_admin, operator] }
+        status: { type: string, enum: [active, inactive] }
+        createdAt: { type: string, format: date-time }
+    CreateCompanyUserInput:
+      type: object
+      required: [username, email, password, role]
+      properties:
+        username: { type: string, minLength: 3 }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+        role: { type: string, enum: [company_admin, operator] }
+    UpdateCompanyUserInput:
+      type: object
+      minProperties: 1
+      properties:
+        role: { type: string, enum: [company_admin, operator] }
+        status: { type: string, enum: [active, inactive] }
+    UserSession:
+      type: object
+      required: [user, company, token]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        company:
+          anyOf:
+            - $ref: "#/components/schemas/Company"
+            - type: "null"
+        token: { type: string }

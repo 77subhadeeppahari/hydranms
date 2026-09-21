@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "HydraNMS Network Monitoring"
+description = "A multi-tenant internet network monitoring web app with company onboarding, licensing, SNMP device discovery, alerts, support, and super-admin controls."
+version = "1.0.0"
+id = "artifacts/hydranms"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19737
+
+[services.development]
+run = "pnpm --filter @workspace/hydranms run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/hydranms", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/hydranms/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19737"
+BASE_PATH = "/"

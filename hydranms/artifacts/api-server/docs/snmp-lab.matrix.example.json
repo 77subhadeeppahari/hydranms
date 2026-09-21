@@ -1,0 +1,90 @@
+{
+  "checks": [
+    {
+      "profile": "cisco",
+      "target": "192.0.2.11",
+      "credential": {
+        "version": "v2c",
+        "communityEnv": "SNMP_LAB_CISCO_COMMUNITY"
+      }
+    },
+    {
+      "profile": "zte",
+      "target": "192.0.2.12",
+      "credential": {
+        "version": "v3",
+        "usernameEnv": "SNMP_LAB_ZTE_USER",
+        "securityLevel": "authPriv",
+        "authProtocol": "sha",
+        "authPasswordEnv": "SNMP_LAB_ZTE_AUTH",
+        "privProtocol": "aes",
+        "privPasswordEnv": "SNMP_LAB_ZTE_PRIV"
+      }
+    },
+    {
+      "profile": "vsol",
+      "target": "192.0.2.13",
+      "credential": {
+        "version": "v1",
+        "communityEnv": "SNMP_LAB_VSOL_COMMUNITY"
+      }
+    },
+    {
+      "profile": "mikrotik",
+      "target": "192.0.2.14",
+      "credential": {
+        "version": "v2c",
+        "communityEnv": "SNMP_LAB_MIKROTIK_COMMUNITY"
+      }
+    },
+    {
+      "profile": "cambium",
+      "target": "192.0.2.15",
+      "credential": {
+        "version": "v3",
+        "usernameEnv": "SNMP_LAB_CAMBIUM_USER",
+        "securityLevel": "noAuthNoPriv"
+      }
+    },
+    {
+      "profile": "juniper",
+      "target": "192.0.2.16",
+      "credential": {
+        "version": "v3",
+        "usernameEnv": "SNMP_LAB_JUNIPER_USER",
+        "securityLevel": "authNoPriv",
+        "authProtocol": "sha",
+        "authPasswordEnv": "SNMP_LAB_JUNIPER_AUTH"
+      }
+    },
+    {
+      "profile": "vbng",
+      "target": "192.0.2.17",
+      "credential": {
+        "version": "v2c",
+        "communityEnv": "SNMP_LAB_VBNG_COMMUNITY"
+      }
+    },
+    {
+      "profile": "servers",
+      "target": "192.0.2.18",
+      "credential": {
+        "version": "v1",
+        "communityEnv": "SNMP_LAB_SERVERS_COMMUNITY"
+      }
+    },
+    {
+      "profile": "olt",
+      "target": "192.0.2.19",
+      "credential": {
+        "version": "v3",
+        "usernameEnv": "SNMP_LAB_OLT_USER",
+        "securityLevel": "authPriv",
+        "authProtocol": "sha",
+        "authPasswordEnv": "SNMP_LAB_OLT_AUTH",
+        "privProtocol": "aes",
+        "privPasswordEnv": "SNMP_LAB_OLT_PRIV"
+      }
+    }
+  ]
+}
