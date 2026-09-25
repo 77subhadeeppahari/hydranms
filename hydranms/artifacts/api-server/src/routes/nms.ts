@@ -1,8 +1,21 @@
+import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import { randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 import { Router, type IRouter, type Request, type Response } from "express";
+import { and, eq } from "drizzle-orm";
 import { Storage } from "@google-cloud/storage";
+import { db, vpnSites } from "@workspace/db";
+import {
+  claimLocalUpload,
+  cleanupLocalObjects,
+  deleteLocalObject,
+  LocalUploadError,
+  readLocalObject,
+  reserveLocalUpload,
+  saveLocalUpload,
+  usesLocalUploadStorage,
+} from "../lib/local-file-storage";
 import {
   CreateCheckoutBody,
   CreateCompanyBody,
@@ -23,6 +36,8 @@ import {
   GetDeviceDetailsResponse,
   GetDeviceHistoryResponse,
   GetDevicesResponse,
+  CreateDeviceOltLoginBody,
+  CreateDeviceOltLoginResponse,
   GetNotificationDeliveriesQueryParams,
   GetLicenseResponse,
   GetPlansResponse,
@@ -55,6 +70,8 @@ import {
   GetCompanyAuditLogResponse,
   GetCompanyPollerLogResponse,
   GetPaymentWebhookEventsResponse,
+  GetAdminPaymentRecordsQueryParams,
+  GetAdminPaymentRecordsResponse,
   GetPaymentRecordsResponse,
   GetContactSubmissionsResponse,
   PurgeContactSubmissionsResponse,
@@ -66,6 +83,9 @@ import {
   ChangeUserPasswordBody,
   UpdateDeviceMibSettingsBody,
   UpdateDeviceMibSettingsResponse,
+  UpdateDeviceWebLoginSettingsBody,
+  UpdateDeviceWebLoginSettingsResponse,
+  CreateOltWebLoginSessionResponse,
   UpdateDeviceCliSettingsBody,
   UpdateDeviceCliSettingsResponse,
   ExecuteDeviceCliCommandBody,
@@ -81,6 +101,7 @@ import {
   deviceDetailsById,
   deviceByCompanyId,
   updateDeviceCliSettings,
+  updateDeviceWebLoginSettings,
   type HistoryWindow,
   listDevices as listPersistedDevices,
   listActiveAlerts,
@@ -89,6 +110,12 @@ import {
   updateDeviceMibSettings,
   upsertDevice,
 } from "../lib/nms-store";
+import {
+  createOltWebLoginTicket,
+  isOltDevice,
+  isSupportedOltWebPort,
+  oltWebLoginSetupIssue,
+} from "../lib/olt-web-proxy";
 import { decryptSnmpCredentials } from "../lib/snmp-crypto";
 import { encryptSecret } from "../lib/snmp-crypto";
 import { executeCliCommand, probeCliPort, type CliProtocol } from "../lib/cli-console";
@@ -126,6 +153,7 @@ import {
   updateContactSubmission,
   notificationById,
   listPaymentWebhooks,
+  listAdminPaymentRecords,
   listCompanyResponses,
   listTenantAuditLogs,
   listCompanyUsers,
@@ -175,6 +203,13 @@ import {
 import { deliverNotification, queueCompanyTicketAlert, queueLicenseEmail } from "../lib/notification-service";
 import { isPublicPortalRoute, optionalPortalAuth, requirePortalAuth } from "../middlewares/auth";
 import { logger } from "../lib/logger";
+import {
+  authorizedOltDevice,
+  createOltGrant,
+  isAllowedOltPortalOrigin,
+  oltProxyBaseDomain,
+} from "../lib/olt-proxy";
+import vpnRouter from "./vpn";
 
 const router: IRouter = Router();
 
@@ -293,6 +328,8 @@ router.use((req, res, next) => {
   void requirePortalAuth(req, res, next);
 });
 
+router.use(vpnRouter);
+
 const objectStorageClient = new Storage({
   credentials: {
     audience: "replit",
@@ -362,18 +399,30 @@ async function deleteUnreferencedProfilePicture(objectPath: string): Promise<voi
   const referencedPaths = await referencedProfilePicturePaths();
   if (referencedPaths.has(objectPath)) return;
 
+  if (usesLocalUploadStorage()) {
+    await deleteLocalObject(objectPath);
+    logger.info({ objectPath }, "Removed unreferenced profile picture");
+    return;
+  }
+
   const { bucketName, objectName } = privateObjectLocation(objectPath);
   await objectStorageClient.bucket(bucketName).file(objectName).delete({ ignoreNotFound: true });
   logger.info({ objectPath }, "Removed unreferenced profile picture");
 }
 
 export async function cleanupAbandonedProfilePictures(): Promise<void> {
-  const { bucketName, objectPrefix } = privateObjectDirectory();
   const referencedPaths = await referencedProfilePicturePaths();
+  const cutoff = Date.now() - PROFILE_UPLOAD_RETENTION_MS;
+  if (usesLocalUploadStorage()) {
+    const deleted = await cleanupLocalObjects(cutoff, referencedPaths);
+    if (deleted > 0) logger.info({ deleted }, "Removed abandoned profile pictures");
+    return;
+  }
+
+  const { bucketName, objectPrefix } = privateObjectDirectory();
   const [files] = await objectStorageClient
     .bucket(bucketName)
     .getFiles({ prefix: `${objectPrefix}/uploads/` });
-  const cutoff = Date.now() - PROFILE_UPLOAD_RETENTION_MS;
   let deleted = 0;
 
   for (const file of files) {
@@ -540,6 +589,7 @@ router.patch("/admin/company-profile", async (req, res) => {
 });
 
 router.post("/storage/uploads/request-url", async (req, res) => {
+  if (!authenticatedOnly(req, res)) return;
   const parsed = RequestStorageUploadUrlBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -553,15 +603,73 @@ router.post("/storage/uploads/request-url", async (req, res) => {
   }
   try {
     const objectId = randomUUID();
-    const { bucketName, objectPrefix } = privateObjectDirectory();
-    const objectName = `${objectPrefix}/uploads/${objectId}`;
-    const uploadURL = await signedObjectUploadUrl(bucketName, objectName);
+    let uploadURL: string;
+    if (usesLocalUploadStorage()) {
+      reserveLocalUpload({
+        objectId,
+        userId: req.auth!.user.id,
+        size: parsed.data.size,
+        contentType: parsed.data.contentType,
+      });
+      const requestPath = req.originalUrl.split("?")[0];
+      const uploadPath = requestPath.replace(
+        /\/storage\/uploads\/request-url$/,
+        `/storage/uploads/${objectId}`,
+      );
+      if (uploadPath === requestPath) throw new Error("Unable to construct local upload URL");
+      const publicAppURL = process.env.PUBLIC_APP_URL?.trim();
+      if (!publicAppURL) throw new Error("PUBLIC_APP_URL is required for local upload storage");
+      const publicAppOrigin = new URL(publicAppURL);
+      if (publicAppOrigin.username || publicAppOrigin.password) {
+        throw new Error("PUBLIC_APP_URL must not contain credentials");
+      }
+      uploadURL = new URL(uploadPath, publicAppOrigin.origin).toString();
+    } else {
+      const { bucketName, objectPrefix } = privateObjectDirectory();
+      const objectName = `${objectPrefix}/uploads/${objectId}`;
+      uploadURL = await signedObjectUploadUrl(bucketName, objectName);
+    }
     res.json(RequestStorageUploadUrlResponse.parse({
       uploadURL,
       objectPath: `/objects/uploads/${objectId}`,
     }));
   } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : "Unable to prepare image upload" });
+    const statusCode = error instanceof LocalUploadError ? error.statusCode : 500;
+    res.status(statusCode).json({ error: error instanceof Error ? error.message : "Unable to prepare image upload" });
+  }
+});
+
+router.put("/storage/uploads/:objectId", async (req, res) => {
+  if (!authenticatedOnly(req, res)) return;
+  try {
+    if (!usesLocalUploadStorage()) {
+      res.status(404).json({ error: "Local uploads are not enabled" });
+      return;
+    }
+
+    const contentLengthHeader = req.headers["content-length"];
+    const contentLength = contentLengthHeader === undefined
+      ? undefined
+      : Number(contentLengthHeader);
+    const claimedUpload = claimLocalUpload({
+      objectId: req.params.objectId,
+      userId: req.auth!.user.id,
+      contentType: req.headers["content-type"] ?? "",
+      contentLength,
+    });
+    if (!claimedUpload) {
+      res.status(403).json({ error: "Upload URL is invalid, expired, or already used" });
+      return;
+    }
+
+    await saveLocalUpload(req.params.objectId, req, claimedUpload);
+    res.setHeader("Cache-Control", "no-store");
+    res.status(204).end();
+  } catch (error) {
+    const statusCode = error instanceof LocalUploadError ? error.statusCode : 500;
+    res.status(statusCode).json({
+      error: error instanceof Error ? error.message : "Unable to save image",
+    });
   }
 });
 
@@ -582,6 +690,26 @@ router.get("/storage/objects/*path", async (req, res) => {
       });
       return;
     }
+    if (usesLocalUploadStorage()) {
+      const object = await readLocalObject(objectPath);
+      if (!object) {
+        res.status(404).json({ error: "Object not found" });
+        return;
+      }
+      res.setHeader("Content-Type", object.contentType);
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Cache-Control", "private, max-age=3600");
+      res.setHeader("Content-Length", String(object.size));
+      createReadStream(object.filePath)
+        .on("error", (error) => {
+          logger.error({ err: error, objectPath }, "Unable to stream local profile picture");
+          if (!res.headersSent) res.status(500).json({ error: "Unable to read object" });
+          else res.destroy(error);
+        })
+        .pipe(res);
+      return;
+    }
+
     const { bucketName, objectName } = privateObjectLocation(objectPath);
     const file = objectStorageClient.bucket(bucketName).file(objectName);
     const [exists] = await file.exists();
@@ -620,6 +748,8 @@ function optionalOid(value: string | null | undefined, field: string): string | 
 
 function deviceResponse(device: {
   id: string;
+  companyId: string;
+  vpnSiteId: string | null;
   name: string;
   ipAddress: string;
   vendor: string;
@@ -648,9 +778,13 @@ function deviceResponse(device: {
   telnetPort: number | null;
   cliUsername: string | null;
   encryptedCliPassword: string | null;
+  webLoginProtocol: string | null;
+  webLoginPort: number | null;
 }) {
   return {
     id: device.id,
+    companyId: device.companyId,
+    vpnSiteId: device.vpnSiteId,
     name: device.name,
     ipAddress: device.ipAddress,
     vendor: device.vendor,
@@ -681,6 +815,8 @@ function deviceResponse(device: {
     sshPort: device.sshPort,
     telnetPort: device.telnetPort,
     cliUsername: device.cliUsername,
+    webLoginProtocol: device.webLoginProtocol,
+    webLoginPort: device.webLoginPort,
   };
 }
 
@@ -911,6 +1047,61 @@ router.get("/devices", async (req, res) => {
   }
 });
 
+router.post("/devices/:deviceId/olt-login", async (req, res): Promise<void> => {
+  if (!authenticatedOnly(req, res)) return;
+  res.setHeader("Cache-Control", "no-store, private");
+  const baseDomain = oltProxyBaseDomain();
+  if (!baseDomain) {
+    res.status(503).json({ error: "The isolated OLT proxy is not configured on the Ubuntu WireGuard host." });
+    return;
+  }
+  const portalOrigin = req.header("origin");
+  if (!isAllowedOltPortalOrigin(portalOrigin, baseDomain)) {
+    res.status(403).json({ error: "OLT login requests must come from the HydraNMS portal." });
+    return;
+  }
+  const parsed = CreateDeviceOltLoginBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Choose HTTP or HTTPS for the device management interface." });
+    return;
+  }
+  let companyId: string;
+  try {
+    companyId = companyIdFromRequest(req);
+  } catch {
+    res.status(400).json({ error: "Select a company before opening this device." });
+    return;
+  }
+  const deviceId = Array.isArray(req.params.deviceId) ? req.params.deviceId[0] : req.params.deviceId;
+  const device = await authorizedOltDevice(companyId, deviceId);
+  if (!device) {
+    const existing = await deviceByCompanyId(companyId, deviceId);
+    if (!existing) {
+      res.status(404).json({ error: "Device not found in the selected company." });
+      return;
+    }
+    res.status(409).json({
+      error: "This device must belong to an active, applied WireGuard site and its management address must be inside that site's LAN.",
+    });
+    return;
+  }
+  try {
+    const grant = createOltGrant({
+      deviceId,
+      companyId,
+      auth: req.auth!,
+      protocol: parsed.data.protocol,
+      portalOrigin,
+    });
+    res.json(CreateDeviceOltLoginResponse.parse({
+      grant,
+      iframeUrl: `https://${deviceId}.${baseDomain}/__hydranms/bootstrap`,
+    }));
+  } catch (error) {
+    res.status(503).json({ error: error instanceof Error ? error.message : "Unable to create an OLT session." });
+  }
+});
+
 router.delete("/devices/:deviceId", async (req, res): Promise<void> => {
   try {
     const deviceId = Array.isArray(req.params.deviceId) ? req.params.deviceId[0] : req.params.deviceId;
@@ -942,6 +1133,107 @@ router.get("/devices/:deviceId/details", async (req, res): Promise<void> => {
     );
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "Unable to read device details" });
+  }
+});
+
+router.patch("/devices/:deviceId/web-login-settings", async (req, res): Promise<void> => {
+  const parsed = UpdateDeviceWebLoginSettingsBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  if (req.auth?.user.role !== "company_admin" && req.auth?.user.role !== "super_admin") {
+    res.status(403).json({ error: "Company administrator access required" });
+    return;
+  }
+  const { webLoginProtocol, webLoginPort } = parsed.data;
+  if (
+    (webLoginProtocol === null) !== (webLoginPort === null) ||
+    (webLoginPort !== null && !isSupportedOltWebPort(webLoginPort))
+  ) {
+    res.status(400).json({ error: "Choose a supported web port and matching HTTP/HTTPS protocol, or clear both settings" });
+    return;
+  }
+  try {
+    const deviceId = Array.isArray(req.params.deviceId) ? req.params.deviceId[0] : req.params.deviceId;
+    const companyId = companyIdFromRequest(req);
+    const existing = await deviceByCompanyId(companyId, deviceId);
+    if (!existing) {
+      res.status(404).json({ error: "Device not found" });
+      return;
+    }
+    if (!isOltDevice(existing)) {
+      res.status(400).json({ error: "Web login settings are available for OLT/PON devices only" });
+      return;
+    }
+    const updated = await updateDeviceWebLoginSettings(companyId, deviceId, {
+      webLoginProtocol,
+      webLoginPort,
+    });
+    if (!updated) {
+      res.status(404).json({ error: "Device not found" });
+      return;
+    }
+    res.json(UpdateDeviceWebLoginSettingsResponse.parse(deviceResponse(updated)));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to update OLT web-login settings" });
+  }
+});
+
+router.post("/devices/:deviceId/olt-web-login/session", async (req, res): Promise<void> => {
+  const parentOriginHeader = req.get("origin");
+  let parentOrigin: string;
+  try {
+    const requestHost = req.get("host");
+    if (!parentOriginHeader || !requestHost) throw new Error("Missing browser origin");
+    const parsedOrigin = new URL(parentOriginHeader);
+    const expectedOrigin = new URL(`${req.protocol}://${requestHost}`).origin;
+    const isLocalHttp =
+      parsedOrigin.protocol === "http:" &&
+      (parsedOrigin.hostname === "localhost" || parsedOrigin.hostname === "127.0.0.1");
+    if (parsedOrigin.origin !== expectedOrigin || (parsedOrigin.protocol !== "https:" && !isLocalHttp)) {
+      throw new Error("Unexpected browser origin");
+    }
+    parentOrigin = parsedOrigin.origin;
+  } catch {
+    res.status(403).json({ error: "The OLT session must be opened from the HydraNMS origin" });
+    return;
+  }
+
+  try {
+    const deviceId = Array.isArray(req.params.deviceId) ? req.params.deviceId[0] : req.params.deviceId;
+    const companyId = companyIdFromRequest(req);
+    const auth = req.auth;
+    if (!auth) {
+      res.status(401).json({ error: "Authentication required" });
+      return;
+    }
+    const device = await deviceByCompanyId(companyId, deviceId);
+    if (!device) {
+      res.status(404).json({ error: "OLT not found" });
+      return;
+    }
+    const setupIssue = await oltWebLoginSetupIssue(companyId, device);
+    if (setupIssue) {
+      res.status(409).json({ error: setupIssue });
+      return;
+    }
+    const session = createOltWebLoginTicket({
+      deviceId,
+      companyId,
+      userId: auth.user.id,
+      authSessionId: auth.sessionId,
+      parentOrigin,
+    });
+    res.json(CreateOltWebLoginSessionResponse.parse(session));
+  } catch (error) {
+    res.status(409).json({
+      error: error instanceof Error && error.message.includes("OLT_PROXY_BASE_DOMAIN")
+        ? "The isolated OLT proxy hostname is not configured on the API server"
+        : error instanceof Error
+          ? error.message
+          : "Unable to create an OLT login session",
+    });
   }
 });
 
@@ -1115,6 +1407,22 @@ router.post("/devices", async (req, res) => {
   }
   try {
     const companyId = companyIdFromRequest(req);
+    let vpnSiteId = parsed.data.vpnSiteId ?? null;
+    if (vpnSiteId) {
+      const [site] = await db
+        .select({ id: vpnSites.id, status: vpnSites.status })
+        .from(vpnSites)
+        .where(and(eq(vpnSites.id, vpnSiteId), eq(vpnSites.companyId, companyId)))
+        .limit(1);
+      if (!site) {
+        res.status(400).json({ error: "The selected VPN site does not belong to this company" });
+        return;
+      }
+      if (site.status === "revoked") {
+        res.status(400).json({ error: "The selected VPN site has been revoked" });
+        return;
+      }
+    }
     const snmpVersion = parsed.data.snmpVersion ?? "v2c";
     if (snmpVersion !== "v3" && !parsed.data.snmpCommunity) {
       res.status(400).json({ error: "snmpCommunity is required for SNMPv1/v2c" });
@@ -1138,6 +1446,7 @@ router.post("/devices", async (req, res) => {
     });
     const id = await upsertDevice({
       companyId,
+      vpnSiteId,
       name: parsed.data.name,
       ipAddress: parsed.data.ipAddress,
       vendor: parsed.data.vendor,
@@ -1910,6 +2219,20 @@ router.get("/admin/billing/webhook-events", async (req, res) => {
       })),
     ),
   );
+});
+
+router.get("/admin/billing/payments", async (req, res) => {
+  if (req.auth?.user.role !== "super_admin") {
+    res.status(403).json({ error: "Super-admin access required" });
+    return;
+  }
+  try {
+    const query = GetAdminPaymentRecordsQueryParams.parse(req.query);
+    const records = await listAdminPaymentRecords(query);
+    res.json(GetAdminPaymentRecordsResponse.parse(records));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to read company billing records" });
+  }
 });
 
 router.get("/support/tickets", async (req, res) => {

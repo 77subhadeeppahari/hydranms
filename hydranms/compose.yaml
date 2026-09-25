@@ -1,0 +1,112 @@
+services:
+  db:
+    image: postgres:16-alpine
+    network_mode: host
+    environment:
+      POSTGRES_DB: hydranms
+      POSTGRES_USER: hydranms
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the protected compose env file}
+    command: ["postgres", "-c", "listen_addresses=127.0.0.1"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U hydranms -d hydranms"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: api
+    network_mode: host
+    user: "1000:1000"
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+      HOST: "127.0.0.1"
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in the protected compose env file}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in the protected compose env file}
+      SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD:?Set SUPERADMIN_PASSWORD in the protected compose env file}
+      SUPERADMIN_USERNAME: ${SUPERADMIN_USERNAME:-admin}
+      SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:?Set PUBLIC_APP_URL in the protected compose env file}
+      UPLOAD_STORAGE_DRIVER: local
+      UPLOADS_LOCAL_DIR: /var/lib/hydranms/uploads
+      WIREGUARD_NETWORK: ${WIREGUARD_NETWORK:-10.90.0.0/16}
+      WIREGUARD_ENDPOINT: ${WIREGUARD_ENDPOINT:?Set WIREGUARD_ENDPOINT in the protected compose env file}
+      WIREGUARD_SERVER_PUBLIC_KEY: ${WIREGUARD_SERVER_PUBLIC_KEY:?Set WIREGUARD_SERVER_PUBLIC_KEY in the protected compose env file}
+      WIREGUARD_INTERFACE: ${WIREGUARD_INTERFACE:-wg-hydranms}
+      OLT_PROXY_BASE_DOMAIN: ${OLT_PROXY_BASE_DOMAIN:-olt.hydranms.in}
+      ABLEPAY_API_KEY: ${ABLEPAY_API_KEY:-}
+      ABLEPAY_SALT: ${ABLEPAY_SALT:-}
+    volumes:
+      - /var/lib/hydranms/uploads:/var/lib/hydranms/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8080/api/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: web
+    network_mode: host
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:rw,noexec,nosuid,size=16m
+      - /var/run:rw,noexec,nosuid,size=4m
+      - /tmp:rw,noexec,nosuid,size=8m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db-migrate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: workspace-build
+    network_mode: host
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in the protected compose env file}
+    command: ["pnpm", "--filter", "@workspace/db", "run", "push"]
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles:
+      - maintenance
+
+volumes:
+  postgres_data:

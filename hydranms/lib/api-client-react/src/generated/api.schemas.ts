@@ -39,30 +39,112 @@ export interface AdminDashboard {
   pendingContactInquiries: number;
 }
 
-export type DeviceStatus = typeof DeviceStatus[keyof typeof DeviceStatus];
+export type VpnSiteStatus = (typeof VpnSiteStatus)[keyof typeof VpnSiteStatus];
 
+export const VpnSiteStatus = {
+  pending: "pending",
+  active: "active",
+  offline: "offline",
+  revoked: "revoked",
+} as const;
+
+export type VpnSiteRouteState =
+  (typeof VpnSiteRouteState)[keyof typeof VpnSiteRouteState];
+
+export const VpnSiteRouteState = {
+  pending: "pending",
+  applied: "applied",
+  error: "error",
+} as const;
+
+export interface VpnSite {
+  id: string;
+  companyId: string;
+  name: string;
+  lanCidr: string;
+  tunnelAddress: string;
+  routerOsVersion: string;
+  status: VpnSiteStatus;
+  routeState: VpnSiteRouteState;
+  /** @nullable */
+  lastHandshakeAt: string | null;
+  /** @nullable */
+  lastBundleAt: string | null;
+  /** @nullable */
+  revokedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VpnSiteInput {
+  /** @minLength 1 */
+  companyId: string;
+  /**
+   * @minLength 1
+   * @maxLength 120
+   */
+  name: string;
+  /** @pattern ^[0-9.]+/[0-9]+$ */
+  lanCidr: string;
+  /**
+   * @minLength 1
+   * @maxLength 40
+   */
+  routerOsVersion: string;
+}
+
+export interface VpnSiteBundle {
+  siteId: string;
+  name: string;
+  tunnelAddress: string;
+  lanCidr: string;
+  serverEndpoint: string;
+  serverPublicKey: string;
+  clientPrivateKey: string;
+  clientPublicKey: string;
+  wireguardConfig: string;
+  routerOsScript: string;
+  serverPeerSnippet: string;
+  generatedAt: string;
+}
+
+export type DeviceStatus = (typeof DeviceStatus)[keyof typeof DeviceStatus];
 
 export const DeviceStatus = {
-  online: 'online',
-  warning: 'warning',
-  offline: 'offline',
-  discovering: 'discovering',
+  online: "online",
+  warning: "warning",
+  offline: "offline",
+  discovering: "discovering",
 } as const;
 
 /**
  * @nullable
  */
-export type DeviceCliProtocol = typeof DeviceCliProtocol[keyof typeof DeviceCliProtocol] | null;
-
+export type DeviceCliProtocol =
+  (typeof DeviceCliProtocol)[keyof typeof DeviceCliProtocol] | null;
 
 export const DeviceCliProtocol = {
-  ssh: 'ssh',
-  telnet: 'telnet',
-  both: 'both',
+  ssh: "ssh",
+  telnet: "telnet",
+  both: "both",
+} as const;
+
+/**
+ * @nullable
+ */
+export type DeviceWebLoginProtocol =
+  (typeof DeviceWebLoginProtocol)[keyof typeof DeviceWebLoginProtocol] | null;
+
+export const DeviceWebLoginProtocol = {
+  http: "http",
+  https: "https",
 } as const;
 
 export interface Device {
   id: string;
+  companyId: string;
+  /** @nullable */
+  vpnSiteId: string | null;
   name: string;
   ipAddress: string;
   vendor: string;
@@ -109,6 +191,17 @@ export interface Device {
   telnetPort: number | null;
   /** @nullable */
   cliUsername: string | null;
+  /** @nullable */
+  webLoginProtocol: DeviceWebLoginProtocol;
+  /** @nullable */
+  webLoginPort: number | null;
+}
+
+export interface OltWebLoginSession {
+  proxyOrigin: string;
+  /** Short-lived one-time token; never log or persist it */
+  ticket: string;
+  ticketExpiresAt: string;
 }
 
 export interface DeviceInterface {
@@ -135,14 +228,14 @@ export interface DeviceInterface {
   /** @nullable */
   sfpSerialNumber: string | null;
   /**
-     * Optical receive power in dBm
-     * @nullable
-     */
+   * Optical receive power in dBm
+   * @nullable
+   */
   opticalRxPower: number | null;
   /**
-     * Optical transmit power in dBm
-     * @nullable
-     */
+   * Optical transmit power in dBm
+   * @nullable
+   */
   opticalTxPower: number | null;
   updatedAt: string;
 }
@@ -195,14 +288,14 @@ export interface DeviceDetails {
   ponTelemetry: PonTelemetry[];
 }
 
-export type DeviceHistoryHistoryWindow = typeof DeviceHistoryHistoryWindow[keyof typeof DeviceHistoryHistoryWindow];
-
+export type DeviceHistoryHistoryWindow =
+  (typeof DeviceHistoryHistoryWindow)[keyof typeof DeviceHistoryHistoryWindow];
 
 export const DeviceHistoryHistoryWindow = {
-  '1h': '1h',
-  '6h': '6h',
-  '24h': '24h',
-  '7d': '7d',
+  "1h": "1h",
+  "6h": "6h",
+  "24h": "24h",
+  "7d": "7d",
 } as const;
 
 export interface DeviceHistory {
@@ -211,47 +304,49 @@ export interface DeviceHistory {
   historyWindow: DeviceHistoryHistoryWindow;
 }
 
-export type DeviceInputSnmpVersion = typeof DeviceInputSnmpVersion[keyof typeof DeviceInputSnmpVersion];
-
+export type DeviceInputSnmpVersion =
+  (typeof DeviceInputSnmpVersion)[keyof typeof DeviceInputSnmpVersion];
 
 export const DeviceInputSnmpVersion = {
-  v1: 'v1',
-  v2c: 'v2c',
-  v3: 'v3',
+  v1: "v1",
+  v2c: "v2c",
+  v3: "v3",
 } as const;
 
-export type DeviceInputSnmpAuthProtocol = typeof DeviceInputSnmpAuthProtocol[keyof typeof DeviceInputSnmpAuthProtocol];
-
+export type DeviceInputSnmpAuthProtocol =
+  (typeof DeviceInputSnmpAuthProtocol)[keyof typeof DeviceInputSnmpAuthProtocol];
 
 export const DeviceInputSnmpAuthProtocol = {
-  md5: 'md5',
-  sha: 'sha',
-  sha224: 'sha224',
-  sha256: 'sha256',
-  sha384: 'sha384',
-  sha512: 'sha512',
+  md5: "md5",
+  sha: "sha",
+  sha224: "sha224",
+  sha256: "sha256",
+  sha384: "sha384",
+  sha512: "sha512",
 } as const;
 
-export type DeviceInputSnmpPrivProtocol = typeof DeviceInputSnmpPrivProtocol[keyof typeof DeviceInputSnmpPrivProtocol];
-
+export type DeviceInputSnmpPrivProtocol =
+  (typeof DeviceInputSnmpPrivProtocol)[keyof typeof DeviceInputSnmpPrivProtocol];
 
 export const DeviceInputSnmpPrivProtocol = {
-  des: 'des',
-  aes: 'aes',
-  aes256b: 'aes256b',
-  aes256r: 'aes256r',
+  des: "des",
+  aes: "aes",
+  aes256b: "aes256b",
+  aes256r: "aes256r",
 } as const;
 
-export type DeviceInputSnmpSecurityLevel = typeof DeviceInputSnmpSecurityLevel[keyof typeof DeviceInputSnmpSecurityLevel];
-
+export type DeviceInputSnmpSecurityLevel =
+  (typeof DeviceInputSnmpSecurityLevel)[keyof typeof DeviceInputSnmpSecurityLevel];
 
 export const DeviceInputSnmpSecurityLevel = {
-  noAuthNoPriv: 'noAuthNoPriv',
-  authNoPriv: 'authNoPriv',
-  authPriv: 'authPriv',
+  noAuthNoPriv: "noAuthNoPriv",
+  authNoPriv: "authNoPriv",
+  authPriv: "authPriv",
 } as const;
 
 export interface DeviceInput {
+  /** @nullable */
+  vpnSiteId?: string | null;
   /** @minLength 1 */
   name: string;
   /** @minLength 1 */
@@ -301,26 +396,45 @@ export interface DeviceMibSettingsInput {
   txPowerRoot: string | null;
 }
 
-export type DeviceCliSettingsInputCliProtocol = typeof DeviceCliSettingsInputCliProtocol[keyof typeof DeviceCliSettingsInputCliProtocol];
+/**
+ * @nullable
+ */
+export type DeviceWebLoginSettingsInputWebLoginProtocol =
+  | (typeof DeviceWebLoginSettingsInputWebLoginProtocol)[keyof typeof DeviceWebLoginSettingsInputWebLoginProtocol]
+  | null;
 
+export const DeviceWebLoginSettingsInputWebLoginProtocol = {
+  http: "http",
+  https: "https",
+} as const;
+
+export interface DeviceWebLoginSettingsInput {
+  /** @nullable */
+  webLoginProtocol: DeviceWebLoginSettingsInputWebLoginProtocol;
+  /** @nullable */
+  webLoginPort: number | null;
+}
+
+export type DeviceCliSettingsInputCliProtocol =
+  (typeof DeviceCliSettingsInputCliProtocol)[keyof typeof DeviceCliSettingsInputCliProtocol];
 
 export const DeviceCliSettingsInputCliProtocol = {
-  ssh: 'ssh',
-  telnet: 'telnet',
-  both: 'both',
+  ssh: "ssh",
+  telnet: "telnet",
+  both: "both",
 } as const;
 
 export interface DeviceCliSettingsInput {
   cliProtocol: DeviceCliSettingsInputCliProtocol;
   /**
-     * @minimum 1
-     * @maximum 65535
-     */
+   * @minimum 1
+   * @maximum 65535
+   */
   sshPort: number;
   /**
-     * @minimum 1
-     * @maximum 65535
-     */
+   * @minimum 1
+   * @maximum 65535
+   */
   telnetPort: number;
   /** @minLength 1 */
   cliUsername: string;
@@ -328,29 +442,46 @@ export interface DeviceCliSettingsInput {
   cliPassword: string;
 }
 
-export type DeviceCliCommandInputProtocol = typeof DeviceCliCommandInputProtocol[keyof typeof DeviceCliCommandInputProtocol];
+export type DeviceOltLoginInputProtocol =
+  (typeof DeviceOltLoginInputProtocol)[keyof typeof DeviceOltLoginInputProtocol];
 
+export const DeviceOltLoginInputProtocol = {
+  http: "http",
+  https: "https",
+} as const;
+
+export interface DeviceOltLoginInput {
+  protocol: DeviceOltLoginInputProtocol;
+}
+
+export interface DeviceOltLogin {
+  grant: string;
+  iframeUrl: string;
+}
+
+export type DeviceCliCommandInputProtocol =
+  (typeof DeviceCliCommandInputProtocol)[keyof typeof DeviceCliCommandInputProtocol];
 
 export const DeviceCliCommandInputProtocol = {
-  ssh: 'ssh',
-  telnet: 'telnet',
+  ssh: "ssh",
+  telnet: "telnet",
 } as const;
 
 export interface DeviceCliCommandInput {
   protocol: DeviceCliCommandInputProtocol;
   /**
-     * @minLength 1
-     * @maxLength 2000
-     */
+   * @minLength 1
+   * @maxLength 2000
+   */
   command: string;
 }
 
-export type DeviceCliCommandResponseProtocol = typeof DeviceCliCommandResponseProtocol[keyof typeof DeviceCliCommandResponseProtocol];
-
+export type DeviceCliCommandResponseProtocol =
+  (typeof DeviceCliCommandResponseProtocol)[keyof typeof DeviceCliCommandResponseProtocol];
 
 export const DeviceCliCommandResponseProtocol = {
-  ssh: 'ssh',
-  telnet: 'telnet',
+  ssh: "ssh",
+  telnet: "telnet",
 } as const;
 
 export interface DeviceCliCommandResponse {
@@ -360,13 +491,13 @@ export interface DeviceCliCommandResponse {
   durationMs: number;
 }
 
-export type DeviceCliStatusState = typeof DeviceCliStatusState[keyof typeof DeviceCliStatusState];
-
+export type DeviceCliStatusState =
+  (typeof DeviceCliStatusState)[keyof typeof DeviceCliStatusState];
 
 export const DeviceCliStatusState = {
-  reachable: 'reachable',
-  unreachable: 'unreachable',
-  not_configured: 'not_configured',
+  reachable: "reachable",
+  unreachable: "unreachable",
+  not_configured: "not_configured",
 } as const;
 
 export interface DeviceCliStatus {
@@ -380,13 +511,13 @@ export interface DeviceCliStatusResponse {
   telnet: DeviceCliStatus;
 }
 
-export type DiscoveryInputSnmpVersion = typeof DiscoveryInputSnmpVersion[keyof typeof DiscoveryInputSnmpVersion];
-
+export type DiscoveryInputSnmpVersion =
+  (typeof DiscoveryInputSnmpVersion)[keyof typeof DiscoveryInputSnmpVersion];
 
 export const DiscoveryInputSnmpVersion = {
-  v1: 'v1',
-  v2c: 'v2c',
-  v3: 'v3',
+  v1: "v1",
+  v2c: "v2c",
+  v3: "v3",
 } as const;
 
 export interface DiscoveryInput {
@@ -397,13 +528,13 @@ export interface DiscoveryInput {
   credentialLabel: string;
 }
 
-export type DiscoveryJobStatus = typeof DiscoveryJobStatus[keyof typeof DiscoveryJobStatus];
-
+export type DiscoveryJobStatus =
+  (typeof DiscoveryJobStatus)[keyof typeof DiscoveryJobStatus];
 
 export const DiscoveryJobStatus = {
-  queued: 'queued',
-  running: 'running',
-  completed: 'completed',
+  queued: "queued",
+  running: "running",
+  completed: "completed",
 } as const;
 
 export interface DiscoveryJob {
@@ -413,27 +544,26 @@ export interface DiscoveryJob {
   discoveredCount: number;
 }
 
-export type AlertSeverity = typeof AlertSeverity[keyof typeof AlertSeverity];
-
+export type AlertSeverity = (typeof AlertSeverity)[keyof typeof AlertSeverity];
 
 export const AlertSeverity = {
-  critical: 'critical',
-  warning: 'warning',
-  info: 'info',
+  critical: "critical",
+  warning: "warning",
+  info: "info",
 } as const;
 
-export type AlertEventType = typeof AlertEventType[keyof typeof AlertEventType];
-
+export type AlertEventType =
+  (typeof AlertEventType)[keyof typeof AlertEventType];
 
 export const AlertEventType = {
-  devicedown: 'device.down',
-  devicerecovered: 'device.recovered',
-  thresholdbreached: 'threshold.breached',
-  portup: 'port.up',
-  portdown: 'port.down',
-  sfpremoved: 'sfp.removed',
-  sfprxchanged: 'sfp.rx.changed',
-  sfptxchanged: 'sfp.tx.changed',
+  devicedown: "device.down",
+  devicerecovered: "device.recovered",
+  thresholdbreached: "threshold.breached",
+  portup: "port.up",
+  portdown: "port.down",
+  sfpremoved: "sfp.removed",
+  sfprxchanged: "sfp.rx.changed",
+  sfptxchanged: "sfp.tx.changed",
 } as const;
 
 export interface Alert {
@@ -447,22 +577,21 @@ export interface Alert {
   acknowledged: boolean;
 }
 
-export type CompanyStatus = typeof CompanyStatus[keyof typeof CompanyStatus];
-
+export type CompanyStatus = (typeof CompanyStatus)[keyof typeof CompanyStatus];
 
 export const CompanyStatus = {
-  active: 'active',
-  pending: 'pending',
-  suspended: 'suspended',
+  active: "active",
+  pending: "pending",
+  suspended: "suspended",
 } as const;
 
-export type CompanyLicenseStatus = typeof CompanyLicenseStatus[keyof typeof CompanyLicenseStatus];
-
+export type CompanyLicenseStatus =
+  (typeof CompanyLicenseStatus)[keyof typeof CompanyLicenseStatus];
 
 export const CompanyLicenseStatus = {
-  active: 'active',
-  expiring: 'expiring',
-  expired: 'expired',
+  active: "active",
+  expiring: "expiring",
+  expired: "expired",
 } as const;
 
 export interface Company {
@@ -511,19 +640,19 @@ export interface CompanyProfileInput {
 
 export interface CompanyProfilePingInput {
   /**
-     * @minLength 7
-     * @maxLength 15
-     */
+   * @minLength 7
+   * @maxLength 15
+   */
   ip: string;
 }
 
-export type CompanyProfilePingResponseState = typeof CompanyProfilePingResponseState[keyof typeof CompanyProfilePingResponseState];
-
+export type CompanyProfilePingResponseState =
+  (typeof CompanyProfilePingResponseState)[keyof typeof CompanyProfilePingResponseState];
 
 export const CompanyProfilePingResponseState = {
-  reachable: 'reachable',
-  unreachable: 'unreachable',
-  unavailable: 'unavailable',
+  reachable: "reachable",
+  unreachable: "unreachable",
+  unavailable: "unavailable",
 } as const;
 
 export interface CompanyProfilePingResponse {
@@ -558,12 +687,12 @@ export interface AuditLog {
   createdAt: string;
 }
 
-export type PollerLogStatus = typeof PollerLogStatus[keyof typeof PollerLogStatus];
-
+export type PollerLogStatus =
+  (typeof PollerLogStatus)[keyof typeof PollerLogStatus];
 
 export const PollerLogStatus = {
-  success: 'success',
-  failed: 'failed',
+  success: "success",
+  failed: "failed",
 } as const;
 
 export interface PollerLog {
@@ -605,12 +734,12 @@ export interface PlatformCompanyProfileInput {
   logoPath?: string | null;
 }
 
-export type StorageUploadInputPurpose = typeof StorageUploadInputPurpose[keyof typeof StorageUploadInputPurpose];
-
+export type StorageUploadInputPurpose =
+  (typeof StorageUploadInputPurpose)[keyof typeof StorageUploadInputPurpose];
 
 export const StorageUploadInputPurpose = {
-  company_logo: 'company_logo',
-  profile: 'profile',
+  company_logo: "company_logo",
+  profile: "profile",
 } as const;
 
 export interface StorageUploadInput {
@@ -628,12 +757,11 @@ export interface StorageUploadResponse {
   objectPath: string;
 }
 
-export type PlanInterval = typeof PlanInterval[keyof typeof PlanInterval];
-
+export type PlanInterval = (typeof PlanInterval)[keyof typeof PlanInterval];
 
 export const PlanInterval = {
-  monthly: 'monthly',
-  yearly: 'yearly',
+  monthly: "monthly",
+  yearly: "yearly",
 } as const;
 
 export interface Plan {
@@ -646,12 +774,12 @@ export interface Plan {
   popular: boolean;
 }
 
-export type PlanInputInterval = typeof PlanInputInterval[keyof typeof PlanInputInterval];
-
+export type PlanInputInterval =
+  (typeof PlanInputInterval)[keyof typeof PlanInputInterval];
 
 export const PlanInputInterval = {
-  monthly: 'monthly',
-  yearly: 'yearly',
+  monthly: "monthly",
+  yearly: "yearly",
 } as const;
 
 export interface PlanInput {
@@ -674,20 +802,20 @@ export interface CheckoutInput {
   companyId?: string | null;
 }
 
-export type CheckoutSessionProvider = typeof CheckoutSessionProvider[keyof typeof CheckoutSessionProvider];
-
+export type CheckoutSessionProvider =
+  (typeof CheckoutSessionProvider)[keyof typeof CheckoutSessionProvider];
 
 export const CheckoutSessionProvider = {
-  ablepay: 'ablepay',
+  ablepay: "ablepay",
 } as const;
 
-export type CheckoutSessionStatus = typeof CheckoutSessionStatus[keyof typeof CheckoutSessionStatus];
-
+export type CheckoutSessionStatus =
+  (typeof CheckoutSessionStatus)[keyof typeof CheckoutSessionStatus];
 
 export const CheckoutSessionStatus = {
-  created: 'created',
-  pending: 'pending',
-  paid: 'paid',
+  created: "created",
+  pending: "pending",
+  paid: "paid",
 } as const;
 
 export interface CheckoutSession {
@@ -703,13 +831,12 @@ export interface CheckoutSession {
   checkoutUrl?: string | null;
 }
 
-export type LicenseStatus = typeof LicenseStatus[keyof typeof LicenseStatus];
-
+export type LicenseStatus = (typeof LicenseStatus)[keyof typeof LicenseStatus];
 
 export const LicenseStatus = {
-  active: 'active',
-  expiring: 'expiring',
-  expired: 'expired',
+  active: "active",
+  expiring: "expiring",
+  expired: "expired",
 } as const;
 
 export interface License {
@@ -721,21 +848,21 @@ export interface License {
   issuedTo: string;
 }
 
-export type PaymentRecordStatus = typeof PaymentRecordStatus[keyof typeof PaymentRecordStatus];
-
+export type PaymentRecordStatus =
+  (typeof PaymentRecordStatus)[keyof typeof PaymentRecordStatus];
 
 export const PaymentRecordStatus = {
-  pending: 'pending',
-  paid: 'paid',
-  failed: 'failed',
+  pending: "pending",
+  paid: "paid",
+  failed: "failed",
 } as const;
 
-export type PaymentRecordPlanInterval = typeof PaymentRecordPlanInterval[keyof typeof PaymentRecordPlanInterval];
-
+export type PaymentRecordPlanInterval =
+  (typeof PaymentRecordPlanInterval)[keyof typeof PaymentRecordPlanInterval];
 
 export const PaymentRecordPlanInterval = {
-  monthly: 'monthly',
-  yearly: 'yearly',
+  monthly: "monthly",
+  yearly: "yearly",
 } as const;
 
 export interface PaymentRecord {
@@ -764,13 +891,38 @@ export interface PaymentRecord {
 
 export type PaymentRecordList = PaymentRecord[];
 
-export type LicenseUpdateInputStatus = typeof LicenseUpdateInputStatus[keyof typeof LicenseUpdateInputStatus];
+export type AdminPaymentRecord = PaymentRecord & {
+  companyId: string;
+  companyName: string;
+  companyEmail: string;
+  companySubdomain: string;
+  /** @nullable */
+  companyGstNumber: string | null;
+  companyAddress: string;
+  companyContactNumber: string;
+};
 
+export interface AdminPaymentRecordList {
+  items: AdminPaymentRecord[];
+  /** @minimum 1 */
+  page: number;
+  /**
+   * @minimum 1
+   * @maximum 50
+   */
+  pageSize: number;
+  /** @minimum 0 */
+  total: number;
+  hasMore: boolean;
+}
+
+export type LicenseUpdateInputStatus =
+  (typeof LicenseUpdateInputStatus)[keyof typeof LicenseUpdateInputStatus];
 
 export const LicenseUpdateInputStatus = {
-  active: 'active',
-  expiring: 'expiring',
-  expired: 'expired',
+  active: "active",
+  expiring: "expiring",
+  expired: "expired",
 } as const;
 
 export interface LicenseUpdateInput {
@@ -810,17 +962,17 @@ export interface AlertSettingsInput {
   /** @nullable */
   telegramChatId?: string | null;
   /**
-     * @minLength 1
-     * @nullable
-     */
+   * @minLength 1
+   * @nullable
+   */
   telegramBotToken?: string | null;
   ticketTelegramEnabled?: boolean;
   /** @nullable */
   ticketTelegramChatId?: string | null;
   /**
-     * @minLength 1
-     * @nullable
-     */
+   * @minLength 1
+   * @nullable
+   */
   ticketTelegramBotToken?: string | null;
   /** @nullable */
   rxPowerLowThreshold?: number | null;
@@ -836,9 +988,9 @@ export interface TelegramTestInput {
   /** @minLength 1 */
   chatId: string;
   /**
-     * @minLength 1
-     * @nullable
-     */
+   * @minLength 1
+   * @nullable
+   */
   botToken?: string | null;
 }
 
@@ -851,23 +1003,23 @@ export interface TelegramTestResponse {
   providerMessageId: string | null;
 }
 
-export type NotificationDeliveryChannel = typeof NotificationDeliveryChannel[keyof typeof NotificationDeliveryChannel];
-
+export type NotificationDeliveryChannel =
+  (typeof NotificationDeliveryChannel)[keyof typeof NotificationDeliveryChannel];
 
 export const NotificationDeliveryChannel = {
-  email: 'email',
-  telegram: 'telegram',
-  ticket_telegram: 'ticket_telegram',
+  email: "email",
+  telegram: "telegram",
+  ticket_telegram: "ticket_telegram",
 } as const;
 
-export type NotificationDeliveryStatus = typeof NotificationDeliveryStatus[keyof typeof NotificationDeliveryStatus];
-
+export type NotificationDeliveryStatus =
+  (typeof NotificationDeliveryStatus)[keyof typeof NotificationDeliveryStatus];
 
 export const NotificationDeliveryStatus = {
-  queued: 'queued',
-  sending: 'sending',
-  sent: 'sent',
-  failed: 'failed',
+  queued: "queued",
+  sending: "sending",
+  sent: "sent",
+  failed: "failed",
 } as const;
 
 export interface NotificationDelivery {
@@ -922,23 +1074,23 @@ export interface WebhookReceipt {
   duplicate?: boolean;
 }
 
-export type SupportTicketStatus = typeof SupportTicketStatus[keyof typeof SupportTicketStatus];
-
+export type SupportTicketStatus =
+  (typeof SupportTicketStatus)[keyof typeof SupportTicketStatus];
 
 export const SupportTicketStatus = {
-  open: 'open',
-  in_progress: 'in_progress',
-  resolved: 'resolved',
+  open: "open",
+  in_progress: "in_progress",
+  resolved: "resolved",
 } as const;
 
-export type SupportTicketPriority = typeof SupportTicketPriority[keyof typeof SupportTicketPriority];
-
+export type SupportTicketPriority =
+  (typeof SupportTicketPriority)[keyof typeof SupportTicketPriority];
 
 export const SupportTicketPriority = {
-  low: 'low',
-  medium: 'medium',
-  high: 'high',
-  urgent: 'urgent',
+  low: "low",
+  medium: "medium",
+  high: "high",
+  urgent: "urgent",
 } as const;
 
 export interface SupportTicket {
@@ -952,14 +1104,14 @@ export interface SupportTicket {
   supportPin?: string | null;
 }
 
-export type SupportTicketInputPriority = typeof SupportTicketInputPriority[keyof typeof SupportTicketInputPriority];
-
+export type SupportTicketInputPriority =
+  (typeof SupportTicketInputPriority)[keyof typeof SupportTicketInputPriority];
 
 export const SupportTicketInputPriority = {
-  low: 'low',
-  medium: 'medium',
-  high: 'high',
-  urgent: 'urgent',
+  low: "low",
+  medium: "medium",
+  high: "high",
+  urgent: "urgent",
 } as const;
 
 export interface SupportTicketInput {
@@ -972,18 +1124,18 @@ export interface SupportTicketInput {
 
 export interface ContactSubmissionInput {
   /**
-     * @minLength 1
-     * @maxLength 120
-     */
+   * @minLength 1
+   * @maxLength 120
+   */
   name: string;
   /** @maxLength 320 */
   email: string;
   /** @maxLength 160 */
   company?: string;
   /**
-     * @minLength 1
-     * @maxLength 5000
-     */
+   * @minLength 1
+   * @maxLength 5000
+   */
   message: string;
   /** @maxLength 200 */
   website?: string;
@@ -1002,18 +1154,18 @@ export interface ContactSubmission {
   receivedAt: string;
   handled: boolean;
   /**
-     * @maxLength 1000
-     * @nullable
-     */
+   * @maxLength 1000
+   * @nullable
+   */
   internalNote: string | null;
 }
 
 export interface ContactSubmissionUpdate {
   handled: boolean;
   /**
-     * @maxLength 1000
-     * @nullable
-     */
+   * @maxLength 1000
+   * @nullable
+   */
   internalNote?: string | null;
 }
 
@@ -1027,31 +1179,31 @@ export interface ContactSubmissionCleanup {
   cutoff: string;
 }
 
-export type IncidentTicketSourceType = typeof IncidentTicketSourceType[keyof typeof IncidentTicketSourceType];
-
+export type IncidentTicketSourceType =
+  (typeof IncidentTicketSourceType)[keyof typeof IncidentTicketSourceType];
 
 export const IncidentTicketSourceType = {
-  manual: 'manual',
-  device: 'device',
-  port: 'port',
+  manual: "manual",
+  device: "device",
+  port: "port",
 } as const;
 
-export type IncidentTicketPriority = typeof IncidentTicketPriority[keyof typeof IncidentTicketPriority];
-
+export type IncidentTicketPriority =
+  (typeof IncidentTicketPriority)[keyof typeof IncidentTicketPriority];
 
 export const IncidentTicketPriority = {
-  low: 'low',
-  medium: 'medium',
-  high: 'high',
-  critical: 'critical',
+  low: "low",
+  medium: "medium",
+  high: "high",
+  critical: "critical",
 } as const;
 
-export type IncidentTicketStatus = typeof IncidentTicketStatus[keyof typeof IncidentTicketStatus];
-
+export type IncidentTicketStatus =
+  (typeof IncidentTicketStatus)[keyof typeof IncidentTicketStatus];
 
 export const IncidentTicketStatus = {
-  open: 'open',
-  resolved: 'resolved',
+  open: "open",
+  resolved: "resolved",
 } as const;
 
 export interface IncidentTicket {
@@ -1077,14 +1229,14 @@ export interface IncidentTicket {
   updatedAt: string;
 }
 
-export type IncidentTicketInputPriority = typeof IncidentTicketInputPriority[keyof typeof IncidentTicketInputPriority];
-
+export type IncidentTicketInputPriority =
+  (typeof IncidentTicketInputPriority)[keyof typeof IncidentTicketInputPriority];
 
 export const IncidentTicketInputPriority = {
-  low: 'low',
-  medium: 'medium',
-  high: 'high',
-  critical: 'critical',
+  low: "low",
+  medium: "medium",
+  high: "high",
+  critical: "critical",
 } as const;
 
 export interface IncidentTicketInput {
@@ -1113,20 +1265,19 @@ export interface RegisterInput {
   password: string;
 }
 
-export type RegistrationResultNextStep = typeof RegistrationResultNextStep[keyof typeof RegistrationResultNextStep];
-
+export type RegistrationResultNextStep =
+  (typeof RegistrationResultNextStep)[keyof typeof RegistrationResultNextStep];
 
 export const RegistrationResultNextStep = {
-  payment: 'payment',
+  payment: "payment",
 } as const;
 
-export type UserRole = typeof UserRole[keyof typeof UserRole];
-
+export type UserRole = (typeof UserRole)[keyof typeof UserRole];
 
 export const UserRole = {
-  super_admin: 'super_admin',
-  company_admin: 'company_admin',
-  operator: 'operator',
+  super_admin: "super_admin",
+  company_admin: "company_admin",
+  operator: "operator",
 } as const;
 
 export interface User {
@@ -1152,13 +1303,13 @@ export interface LoginInput {
   password: string;
 }
 
-export type UserProfileRole = typeof UserProfileRole[keyof typeof UserProfileRole];
-
+export type UserProfileRole =
+  (typeof UserProfileRole)[keyof typeof UserProfileRole];
 
 export const UserProfileRole = {
-  super_admin: 'super_admin',
-  company_admin: 'company_admin',
-  operator: 'operator',
+  super_admin: "super_admin",
+  company_admin: "company_admin",
+  operator: "operator",
 } as const;
 
 export interface UserProfile {
@@ -1190,20 +1341,20 @@ export interface PasswordChangeResponse {
   token: string;
 }
 
-export type CompanyUserRole = typeof CompanyUserRole[keyof typeof CompanyUserRole];
-
+export type CompanyUserRole =
+  (typeof CompanyUserRole)[keyof typeof CompanyUserRole];
 
 export const CompanyUserRole = {
-  company_admin: 'company_admin',
-  operator: 'operator',
+  company_admin: "company_admin",
+  operator: "operator",
 } as const;
 
-export type CompanyUserStatus = typeof CompanyUserStatus[keyof typeof CompanyUserStatus];
-
+export type CompanyUserStatus =
+  (typeof CompanyUserStatus)[keyof typeof CompanyUserStatus];
 
 export const CompanyUserStatus = {
-  active: 'active',
-  inactive: 'inactive',
+  active: "active",
+  inactive: "inactive",
 } as const;
 
 export interface CompanyUser {
@@ -1215,12 +1366,12 @@ export interface CompanyUser {
   createdAt: string;
 }
 
-export type CreateCompanyUserInputRole = typeof CreateCompanyUserInputRole[keyof typeof CreateCompanyUserInputRole];
-
+export type CreateCompanyUserInputRole =
+  (typeof CreateCompanyUserInputRole)[keyof typeof CreateCompanyUserInputRole];
 
 export const CreateCompanyUserInputRole = {
-  company_admin: 'company_admin',
-  operator: 'operator',
+  company_admin: "company_admin",
+  operator: "operator",
 } as const;
 
 export interface CreateCompanyUserInput {
@@ -1232,20 +1383,20 @@ export interface CreateCompanyUserInput {
   role: CreateCompanyUserInputRole;
 }
 
-export type UpdateCompanyUserInputRole = typeof UpdateCompanyUserInputRole[keyof typeof UpdateCompanyUserInputRole];
-
+export type UpdateCompanyUserInputRole =
+  (typeof UpdateCompanyUserInputRole)[keyof typeof UpdateCompanyUserInputRole];
 
 export const UpdateCompanyUserInputRole = {
-  company_admin: 'company_admin',
-  operator: 'operator',
+  company_admin: "company_admin",
+  operator: "operator",
 } as const;
 
-export type UpdateCompanyUserInputStatus = typeof UpdateCompanyUserInputStatus[keyof typeof UpdateCompanyUserInputStatus];
-
+export type UpdateCompanyUserInputStatus =
+  (typeof UpdateCompanyUserInputStatus)[keyof typeof UpdateCompanyUserInputStatus];
 
 export const UpdateCompanyUserInputStatus = {
-  active: 'active',
-  inactive: 'inactive',
+  active: "active",
+  inactive: "inactive",
 } as const;
 
 export interface UpdateCompanyUserInput {
@@ -1260,68 +1411,98 @@ export interface UserSession {
 }
 
 export type GetDeviceHistoryParams = {
-deviceId: string;
-/**
- * Recent history window to return
- */
-window?: GetDeviceHistoryWindow;
+  deviceId: string;
+  /**
+   * Recent history window to return
+   */
+  window?: GetDeviceHistoryWindow;
 };
 
-export type GetDeviceHistoryWindow = typeof GetDeviceHistoryWindow[keyof typeof GetDeviceHistoryWindow];
-
+export type GetDeviceHistoryWindow =
+  (typeof GetDeviceHistoryWindow)[keyof typeof GetDeviceHistoryWindow];
 
 export const GetDeviceHistoryWindow = {
-  '1h': '1h',
-  '6h': '6h',
-  '24h': '24h',
-  '7d': '7d',
+  "1h": "1h",
+  "6h": "6h",
+  "24h": "24h",
+  "7d": "7d",
 } as const;
 
 export type GetCompanyPollerLogParams = {
-companyId: string;
-/**
- * @minimum 1
- * @maximum 200
- */
-limit?: number;
+  companyId: string;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
 };
 
 export type GetNotificationDeliveriesParams = {
-/**
- * @minimum 1
- */
-page?: number;
-/**
- * @minimum 1
- * @maximum 50
- */
-pageSize?: number;
-status?: GetNotificationDeliveriesStatus;
-channel?: GetNotificationDeliveriesChannel;
-eventType?: string;
-recipient?: string;
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 50
+   */
+  pageSize?: number;
+  status?: GetNotificationDeliveriesStatus;
+  channel?: GetNotificationDeliveriesChannel;
+  eventType?: string;
+  recipient?: string;
 };
 
-export type GetNotificationDeliveriesStatus = typeof GetNotificationDeliveriesStatus[keyof typeof GetNotificationDeliveriesStatus];
-
+export type GetNotificationDeliveriesStatus =
+  (typeof GetNotificationDeliveriesStatus)[keyof typeof GetNotificationDeliveriesStatus];
 
 export const GetNotificationDeliveriesStatus = {
-  queued: 'queued',
-  sending: 'sending',
-  sent: 'sent',
-  failed: 'failed',
+  queued: "queued",
+  sending: "sending",
+  sent: "sent",
+  failed: "failed",
 } as const;
 
-export type GetNotificationDeliveriesChannel = typeof GetNotificationDeliveriesChannel[keyof typeof GetNotificationDeliveriesChannel];
-
+export type GetNotificationDeliveriesChannel =
+  (typeof GetNotificationDeliveriesChannel)[keyof typeof GetNotificationDeliveriesChannel];
 
 export const GetNotificationDeliveriesChannel = {
-  email: 'email',
-  telegram: 'telegram',
-  ticket_telegram: 'ticket_telegram',
+  email: "email",
+  telegram: "telegram",
+  ticket_telegram: "ticket_telegram",
 } as const;
 
 export type RetryNotification409 = {
   error: string;
 };
 
+export type GetAdminPaymentRecordsParams = {
+  /**
+   * One-based page number, ordered from newest checkout to oldest
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * Number of checkout records per page
+   * @minimum 1
+   * @maximum 50
+   */
+  pageSize?: number;
+  /**
+   * Restrict records to one company
+   */
+  companyId?: string;
+  /**
+   * Restrict records to one checkout payment status
+   */
+  status?: GetAdminPaymentRecordsStatus;
+};
+
+export type GetAdminPaymentRecordsStatus =
+  (typeof GetAdminPaymentRecordsStatus)[keyof typeof GetAdminPaymentRecordsStatus];
+
+export const GetAdminPaymentRecordsStatus = {
+  pending: "pending",
+  paid: "paid",
+  failed: "failed",
+} as const;

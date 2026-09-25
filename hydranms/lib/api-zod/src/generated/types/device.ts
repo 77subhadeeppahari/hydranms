@@ -7,9 +7,13 @@
  */
 import type { DeviceCliProtocol } from './deviceCliProtocol';
 import type { DeviceStatus } from './deviceStatus';
+import type { DeviceWebLoginProtocol } from './deviceWebLoginProtocol';
 
 export interface Device {
   id: string;
+  companyId: string;
+  /** @nullable */
+  vpnSiteId: string | null;
   name: string;
   ipAddress: string;
   vendor: string;
@@ -56,4 +60,8 @@ export interface Device {
   telnetPort: number | null;
   /** @nullable */
   cliUsername: string | null;
+  /** @nullable */
+  webLoginProtocol: DeviceWebLoginProtocol;
+  /** @nullable */
+  webLoginPort: number | null;
 }

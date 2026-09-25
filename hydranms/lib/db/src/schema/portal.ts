@@ -134,6 +134,7 @@ export const checkoutSessions = pgTable(
   (table) => [
     unique("checkout_sessions_provider_session_unique").on(table.provider, table.providerSessionId),
     index("checkout_sessions_company_index").on(table.companyId, table.createdAt),
+    index("checkout_sessions_created_at_index").on(table.createdAt),
   ],
 );
 
@@ -154,6 +155,7 @@ export const paymentWebhookEvents = pgTable(
   (table) => [
     unique("payment_webhook_events_provider_event_unique").on(table.provider, table.eventId),
     index("payment_webhook_events_status_index").on(table.status, table.receivedAt),
+    index("payment_webhook_events_payload_gin_index").using("gin", table.payload),
   ],
 );
 

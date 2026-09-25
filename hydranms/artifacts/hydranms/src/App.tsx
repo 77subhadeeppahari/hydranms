@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import {
   Activity, AlertCircle, Bell, Building2, Check, CheckCircle2, ChevronRight, CircleHelp,
@@ -7,20 +7,21 @@ import {
   Download, FileText, LogOut, MessageSquare, Pencil, Server, Settings2, ShieldCheck, Signal, Sparkles, Ticket, Trash2, UserRound, Wifi, X,
 } from 'lucide-react';
 import {
-  getGetAlertSettingsQueryKey, getGetCompaniesQueryKey, getGetCompanyProfileQueryKey, getGetCompanyUsersQueryKey, getGetCompanyAuditLogQueryKey, getGetCompanyPollerLogQueryKey, getGetDashboardQueryKey, getGetDevicesQueryKey, getGetDeviceDetailsQueryKey, getGetDeviceCliStatusQueryKey, getGetPaymentRecordsQueryKey, getGetUserProfileQueryKey,
+  getGetAlertSettingsQueryKey, getGetCompaniesQueryKey, getGetCompanyProfileQueryKey, getGetCompanyUsersQueryKey, getGetCompanyAuditLogQueryKey, getGetCompanyPollerLogQueryKey, getGetDashboardQueryKey, getGetDevicesQueryKey, getGetDeviceDetailsQueryKey, getGetDeviceCliStatusQueryKey, getGetPaymentRecordsQueryKey, getGetAdminPaymentRecordsQueryKey, getGetUserProfileQueryKey,
   getGetNotificationDeliveriesQueryKey, getGetNotificationDeliveryQueryKey, getGetPlansQueryKey, getGetSupportTicketsQueryKey, getGetIncidentTicketsQueryKey, getGetAdminCompanyProfileQueryKey, getGetContactSubmissionsQueryKey, getGetAdminDashboardQueryKey,
   useCreateCheckout, useCreateCompany, useCreatePlan,
   useCreateDevice, useCreateSupportTicket, useDiscoverDevices, useGetAlerts,
-   useGetAlertSettings, useGetCompanies, useGetDashboard, useGetAdminDashboard, useGetDevices, useGetLicense, useGetUserProfile, useUpdateUserProfile, useChangeUserPassword,
+  useGetAlertSettings, useGetCompanies, useGetDashboard, useGetAdminDashboard, useGetDevices, useGetVpnSites, useGetLicense, useGetUserProfile, useUpdateUserProfile, useChangeUserPassword,
   useGetCompanyProfile, useGetCompanyUsers, useGetCompanyAuditLog, useGetCompanyPollerLog, useGetDeviceDetails, useGetDeviceHistory, useGetDeviceCliStatus,
-  useGetNotificationDeliveries, useGetNotificationDelivery, useGetPaymentWebhookEvents, useGetPaymentRecords, useGetPlans, useGetContactSubmissions, useRetryNotification, useTestTelegramAlert, useUpdateAlertSettings,
-  useGetSupportTickets, useGetIncidentTickets, useCreateIncidentTicket, useResolveIncidentTicket, useHealthCheck, useLoginUser, useRegisterUser, useUpdateCompany, useUpdateCompanyProfile, useCheckCompanyProfilePing, useUpdateDeviceMibSettings, useUpdatePlan, useGetAdminCompanyProfile, useUpdateAdminCompanyProfile, useRequestStorageUploadUrl,
+   useGetNotificationDeliveries, useGetNotificationDelivery, useGetPaymentWebhookEvents, useGetPaymentRecords, useGetAdminPaymentRecords, useGetPlans, useGetContactSubmissions, useRetryNotification, useTestTelegramAlert, useUpdateAlertSettings,
+  useGetSupportTickets, useGetIncidentTickets, useCreateIncidentTicket, useResolveIncidentTicket, useHealthCheck, useLoginUser, useRegisterUser, useUpdateCompany, useUpdateCompanyProfile, useCheckCompanyProfilePing, useUpdateDeviceMibSettings, useCreateDeviceOltLogin, useUpdatePlan, useGetAdminCompanyProfile, useUpdateAdminCompanyProfile, useRequestStorageUploadUrl, setAuthTokenGetter,
    useCreateCompanyUser, useDeleteCompany, useDeleteDevice, useUpdateCompanyUser, useUpdateDeviceCliSettings, useExecuteDeviceCliCommand, useUpdateContactSubmission, type Alert, type AuditLog, type Company, type CompanyUser, type Device, type NotificationDelivery, type IncidentTicket, type Plan, type PollerLog, type CompanyProfilePingResponse, type ContactSubmission,
 } from '@workspace/api-client-react';
 import { ErrorBoundary } from '@/components/error-boundary';
 import NotFound from '@/pages/not-found';
 import { About, Contact, Features, Home, PublicPlans } from './PublicSite';
 import { Documentation, DocumentationContent } from './Documentation';
+import VpnPage from './VpnPage';
 import hydraLogo from '@assets/Blue_Black_Modern_Professional_Letter_H_Business_Logo_1789892473456.png';
 import packageJson from '../package.json';
 import { formatCounter, formatInterfaceState, formatPower, interfaceStatus } from './device-detail-formatters';
@@ -29,6 +30,23 @@ import './index.css';
 
 const queryClient = new QueryClient();
 const NMS_VERSION = packageJson.version;
+setAuthTokenGetter(() => (typeof localStorage === 'undefined' ? null : localStorage.getItem('hydranms-token')));
+
+function ipv4Number(value: string): number | null {
+  const parts = value.trim().split('.').map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return null;
+  return (((parts[0] << 24) >>> 0) + (parts[1] << 16) + (parts[2] << 8) + parts[3]) >>> 0;
+}
+
+function ipMatchesCidr(ip: string, cidr: string): boolean {
+  const [network, prefixText] = cidr.split('/');
+  const address = ipv4Number(ip);
+  const networkNumber = ipv4Number(network ?? '');
+  const prefix = Number(prefixText);
+  if (address === null || networkNumber === null || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false;
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return (address & mask) >>> 0 === (networkNumber & mask) >>> 0;
+}
 
 const navGroups = [
   { label: 'Overview', items: [
@@ -37,6 +55,7 @@ const navGroups = [
   { label: 'Operations', items: [
     { href: '/', label: 'Overview', icon: LayoutDashboard },
     { href: '/devices', label: 'Devices', icon: Router },
+    { href: '/vpn', label: 'VPN sites', icon: Wifi },
     { href: '/alerts', label: 'Alerts', icon: Bell },
     { href: '/discovery', label: 'Discovery', icon: Network },
     { href: '/tickets', label: 'Tickets', icon: Ticket },
@@ -84,6 +103,8 @@ type PlatformCompanyProfile = {
   email: string;
   logoPath: string | null;
 };
+type AdminPaymentStatus = 'pending' | 'paid' | 'failed';
+type AdminPaymentFilters = { companyId: string; status: AdminPaymentStatus | '' };
 const BILLING_GST_RATE = 18;
 
 function billingAmounts(planAmount: number) {
@@ -108,6 +129,20 @@ function storedAvatarPath(): string | null {
 function avatarUrl(path: string | null | undefined): string | null {
   if (!path) return null;
   return `/api/storage/objects/${path.replace(/^\/objects\//, '')}`;
+}
+
+async function uploadStorageFile(uploadURL: string, file: File): Promise<Response> {
+  const url = new URL(uploadURL, window.location.origin);
+  const sameOrigin = url.origin === window.location.origin;
+  const headers = new Headers({ 'Content-Type': file.type });
+  const token = sameOrigin ? localStorage.getItem('hydranms-token') : null;
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  return fetch(url, {
+    method: 'PUT',
+    headers,
+    body: file,
+    credentials: sameOrigin ? 'same-origin' : 'omit',
+  });
 }
 
 function persistSession(session: { token: string; user: { role: string; username: string; email: string; name?: string; avatarPath?: string | null } }) {
@@ -178,9 +213,9 @@ function Sidebar({
   const visibleGroups = navGroups
     .map((group) => ({
       ...group,
-       items: group.items.filter((item) => (role === 'super_admin' || item.href !== '/companies') && (!item.superAdminOnly || role === 'super_admin')),
+        items: group.items.filter((item) => (role === 'super_admin' || item.href !== '/companies') && (!item.superAdminOnly || role === 'super_admin') && (role !== 'super_admin' || group.label !== 'Operations' || item.href === '/vpn')),
     }))
-    .filter((group) => role !== 'super_admin' || group.label !== 'Operations')
+    .filter((group) => role !== 'super_admin' || group.label !== 'Operations' || group.items.some((item) => item.href === '/vpn'))
     .filter((group) => group.items.length > 0);
   return <aside className={`sidebar ${open ? 'open' : ''}`}>
     <Logo />
@@ -222,9 +257,9 @@ function Shell({ children }: { children: ReactNode }) {
   const visibleNavGroups = navGroups
     .map((group) => ({
       ...group,
-       items: group.items.filter((item) => (role === 'super_admin' || item.href !== '/companies') && (!item.superAdminOnly || role === 'super_admin')),
+        items: group.items.filter((item) => (role === 'super_admin' || item.href !== '/companies') && (!item.superAdminOnly || role === 'super_admin') && (role !== 'super_admin' || group.label !== 'Operations' || item.href === '/vpn')),
     }))
-    .filter((group) => role !== 'super_admin' || group.label !== 'Operations')
+    .filter((group) => role !== 'super_admin' || group.label !== 'Operations' || group.items.some((item) => item.href === '/vpn'))
     .filter((group) => group.items.length > 0);
   const current = location === '/profile'
     ? 'My profile'
@@ -837,7 +872,13 @@ function formatSystemUptime(seconds: number | null | undefined): string {
 function DeviceDetails({ deviceId, close }: { deviceId: string; close: () => void }) {
   const queryClient = useQueryClient();
   const [historyWindow, setHistoryWindow] = useState<HistoryWindow>('24h');
-  const [detailTab, setDetailTab] = useState<'overview' | 'mrtg' | 'cli'>('overview');
+  const [detailTab, setDetailTab] = useState<'overview' | 'mrtg' | 'cli' | 'olt'>('overview');
+  const [oltProtocol, setOltProtocol] = useState<'http' | 'https'>('http');
+  const [oltConnection, setOltConnection] = useState<{ iframeUrl: string; grant: string } | null>(null);
+  const [oltError, setOltError] = useState('');
+  const [oltLoading, setOltLoading] = useState(false);
+  const oltFrameRef = useRef<HTMLIFrameElement>(null);
+  const oltGrantSentRef = useRef(false);
   const [selectedInterfaceKey, setSelectedInterfaceKey] = useState('all');
   const [selectedOnuKey, setSelectedOnuKey] = useState('all');
   const [selectedPortKey, setSelectedPortKey] = useState<string | null>(null);
@@ -859,13 +900,45 @@ function DeviceDetails({ deviceId, close }: { deviceId: string; close: () => voi
   });
   const history = useGetDeviceHistory({ deviceId, window: historyWindow });
   const updateMibSettings = useUpdateDeviceMibSettings();
+  const createOltLogin = useCreateDeviceOltLogin();
 
   useEffect(() => {
     setSelectedInterfaceKey('all');
     setSelectedOnuKey('all');
     setSelectedPortKey(null);
     setDetailTab('overview');
+    setOltConnection(null);
+    setOltError('');
+    setOltProtocol('http');
   }, [deviceId]);
+  useEffect(() => {
+    if (!oltConnection) return;
+    oltGrantSentRef.current = false;
+    let proxyOrigin = '';
+    try {
+      proxyOrigin = new URL(oltConnection.iframeUrl).origin;
+    } catch {
+      setOltError('The configured isolated OLT hostname is invalid.');
+      return;
+    }
+    const onMessage = (event: MessageEvent) => {
+      if (
+        event.origin !== proxyOrigin ||
+        event.source !== oltFrameRef.current?.contentWindow ||
+        event.data?.type !== 'hydranms-olt-ready' ||
+        oltGrantSentRef.current
+      ) {
+        return;
+      }
+      oltGrantSentRef.current = true;
+      oltFrameRef.current?.contentWindow?.postMessage(
+        { type: 'hydranms-olt-grant', grant: oltConnection.grant },
+        proxyOrigin,
+      );
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [oltConnection]);
   useEffect(() => {
     if (selectedInterfaceKey === 'all') return;
     const keys = details.data?.interfaces.map((item) => item.seriesKey) ?? [];
@@ -905,6 +978,7 @@ function DeviceDetails({ deviceId, close }: { deviceId: string; close: () => voi
 
   const { device, interfaces, ponTelemetry } = details.data;
   const isMikroTik = device.vendor.toLowerCase().replace(/[^a-z0-9]/g, '') === 'mikrotik';
+  const isOltDevice = /olt|pon|onu/i.test(`${device.vendor} ${device.type}`);
   const showPonTelemetry = !isMikroTik && (ponTelemetry.length > 0 || /olt|pon|onu/i.test(device.type));
   const interfaceOptions = interfaces.map((item) => ({
     seriesKey: item.seriesKey,
@@ -964,6 +1038,24 @@ function DeviceDetails({ deviceId, close }: { deviceId: string; close: () => voi
       },
     });
   };
+  const startOltLogin = async () => {
+    setOltLoading(true);
+    setOltError('');
+    setOltConnection(null);
+    try {
+      const result = await createOltLogin.mutateAsync({ deviceId, data: { protocol: oltProtocol } });
+      setOltConnection({ grant: result.grant, iframeUrl: result.iframeUrl });
+    } catch (error) {
+      const serverError = typeof error === 'object' && error !== null && 'data' in error
+        ? (error as { data?: { error?: unknown } }).data?.error
+        : null;
+      setOltError(typeof serverError === 'string'
+        ? serverError
+        : error instanceof Error ? error.message : 'Unable to open the isolated OLT session.');
+    } finally {
+      setOltLoading(false);
+    }
+  };
 
   return <section className="card panel detail-panel rise-2" data-testid={`panel-device-details-${device.id}`}>
     <div className="panel-header">
@@ -1006,6 +1098,7 @@ function DeviceDetails({ deviceId, close }: { deviceId: string; close: () => voi
        <button className={`detail-tab ${detailTab === 'overview' ? 'active' : ''}`} role="tab" aria-selected={detailTab === 'overview'} onClick={() => setDetailTab('overview')} data-testid="tab-device-overview"><Gauge size={14} /> Overview</button>
        <button className={`detail-tab ${detailTab === 'mrtg' ? 'active' : ''}`} role="tab" aria-selected={detailTab === 'mrtg'} onClick={() => setDetailTab('mrtg')} data-testid="tab-device-mrtg"><Activity size={14} /> MRTG traffic</button>
        <button className={`detail-tab ${detailTab === 'cli' ? 'active' : ''}`} role="tab" aria-selected={detailTab === 'cli'} onClick={() => setDetailTab('cli')} data-testid="tab-device-cli"><Command size={14} /> CLI Console</button>
+        {isOltDevice ? <button className={`detail-tab ${detailTab === 'olt' ? 'active' : ''}`} role="tab" aria-selected={detailTab === 'olt'} onClick={() => setDetailTab('olt')} data-testid="tab-device-olt"><Router size={14} /> OLT login</button> : null}
      </div>
      {detailTab === 'overview' ? <>
      <section className="history-section">
@@ -1028,7 +1121,38 @@ function DeviceDetails({ deviceId, close }: { deviceId: string; close: () => voi
         {ponTelemetry.length ? <div className="table-card detail-table-wrap"><table className="data-table detail-table"><thead><tr><th>PON</th><th>ONU</th><th>RX power</th><th>TX power</th><th>Updated</th></tr></thead><tbody>{ponTelemetry.map((item) => <tr key={item.id}><td className="mono">PON {item.ponIndex}</td><td className="mono">ONU {item.onuIndex}</td><td className={`mono ${item.rxPower !== null && item.rxPower < -25 ? 'detail-warning' : ''}`}>{formatPower(item.rxPower)}</td><td className="mono">{formatPower(item.txPower)}</td><td className="mono detail-muted">{new Date(item.updatedAt).toLocaleString()}</td></tr>)}</tbody></table></div> : <EmptyState icon={Wifi} title="No ONU readings yet" description="This device has not returned PON telemetry. Check its SNMP profile and poll status." />}
        </section> : null}
     </div>
-      </> : detailTab === 'mrtg' ? <MrtgTrafficTab interfaces={interfaces} samples={history.data?.interfaceHistory ?? []} historyWindow={historyWindow} liveBandwidth={liveBandwidth} /> : <CliConsoleTab device={device} deviceId={deviceId} />}
+      </> : detailTab === 'mrtg' ? <MrtgTrafficTab interfaces={interfaces} samples={history.data?.interfaceHistory ?? []} historyWindow={historyWindow} liveBandwidth={liveBandwidth} /> : detailTab === 'cli' ? <CliConsoleTab device={device} deviceId={deviceId} /> : null}
+      {isOltDevice ? <section className="card olt-login-panel" style={detailTab === 'olt' ? undefined : { display: 'none' }} data-testid="section-olt-login">
+        <div className="detail-section-head">
+          <div><div className="panel-kicker">Isolated management session</div><div className="panel-title">OLT web login</div><div className="detail-updated">The device opens on a separate HTTPS origin. It cannot read HydraNMS cookies or account storage.</div></div>
+          <span className="status status-info">Tenant-scoped</span>
+        </div>
+        <div className="olt-login-controls">
+          <label className="history-select-label">Device web interface
+            <select className="history-select" value={oltProtocol} onChange={(event) => setOltProtocol(event.target.value as 'http' | 'https')} aria-label="Device management protocol" data-testid="select-olt-protocol">
+              <option value="http">HTTP · port 80</option>
+              <option value="https">HTTPS · port 443</option>
+            </select>
+          </label>
+          <button className="button button-primary" onClick={startOltLogin} disabled={oltLoading} data-testid="button-open-olt-login">
+            {oltLoading ? <Loader2 size={14} className="spin" /> : <Router size={14} />}
+            {oltConnection ? 'Start new session' : 'Connect to OLT'}
+          </button>
+        </div>
+        <p className="form-note olt-login-note">Access is issued for this signed-in user, company, device, and active WireGuard route only. HTTPS mode requires a certificate trusted by the Ubuntu proxy for the device address; use HTTP only when the device is reachable through the encrypted WireGuard tunnel.</p>
+        {oltError ? <div className="history-unavailable olt-login-error" role="alert" data-testid="status-olt-login-error"><AlertCircle size={16} /><span>{oltError}</span></div> : null}
+        {oltConnection ? <div className="olt-frame-wrap" data-testid="container-olt-login-frame">
+          <iframe
+            key={oltConnection.grant}
+            ref={oltFrameRef}
+            src={oltConnection.iframeUrl}
+            title={`${device.name} isolated OLT login`}
+            sandbox="allow-forms allow-scripts allow-same-origin allow-downloads allow-popups allow-modals"
+            referrerPolicy="no-referrer"
+            data-testid="iframe-olt-login"
+          />
+        </div> : null}
+      </section> : null}
      {selectedPort ? <Modal title={`${selectedPort.name} · port details`} close={() => setSelectedPortKey(null)}><div className="port-modal" data-testid={`port-details-${selectedPort.ifIndex}`}><div className="port-modal-summary"><div><div className="panel-kicker">Interface {selectedPort.ifIndex}</div><div className="panel-title">{selectedPort.alias || selectedPort.name}</div><div className="detail-updated">Traffic history for the selected port · {formatHistoryWindow(historyWindow)}</div></div><span className={`status status-${interfaceStatus(selectedPort.adminStatus, selectedPort.operStatus)}`}>{formatInterfaceState(selectedPort.adminStatus, selectedPort.operStatus)}</span></div><div className="port-detail-grid"><div className="port-detail-card"><span>Live RX</span><strong>{formatBandwidth(selectedPortBandwidth?.rx ?? null)}</strong></div><div className="port-detail-card"><span>Live TX</span><strong>{formatBandwidth(selectedPortBandwidth?.tx ?? null)}</strong></div><div className="port-detail-card"><span>Link speed</span><strong>{selectedPort.speedMbps === null ? 'Not reported' : `${selectedPort.speedMbps.toLocaleString()} Mbps`}</strong></div><div className="port-detail-card"><span>RX bytes</span><strong className="mono">{formatCounter(selectedPort.rxBytes)}</strong></div><div className="port-detail-card"><span>TX bytes</span><strong className="mono">{formatCounter(selectedPort.txBytes)}</strong></div><div className="port-detail-card"><span>Updated</span><strong className="mono">{new Date(selectedPort.updatedAt).toLocaleString()}</strong></div></div><section className="port-modal-section" data-testid={`port-sfp-details-${selectedPort.ifIndex}`}><div className="port-modal-section-head"><div><div className="panel-kicker">SFP details</div><div className="detail-updated">Transceiver identity reported by the device</div></div><span className={`status ${selectedPortHasSfp ? 'status-online' : 'status-info'}`}>{selectedPortHasSfp ? 'Detected' : 'Not reported'}</span></div><div className="port-detail-grid"><div className="port-detail-card"><span>Vendor</span><strong>{selectedPort.sfpVendor || 'Not reported'}</strong></div><div className="port-detail-card"><span>Module serial</span><strong className="mono">{selectedPort.sfpSerialNumber || 'Not reported'}</strong></div></div></section><section className="port-modal-section" data-testid={`port-optical-details-${selectedPort.ifIndex}`}><div className="port-modal-section-head"><div><div className="panel-kicker">Optical power details</div><div className="detail-updated">Latest transceiver power readings</div></div><Signal size={15} className="port-modal-section-icon" /></div><div className="port-detail-grid"><div className="port-detail-card"><span>Optical RX</span><strong>{formatPower(selectedPort.opticalRxPower)}</strong></div><div className="port-detail-card"><span>Optical TX</span><strong>{formatPower(selectedPort.opticalTxPower)}</strong></div></div></section><HistoryChart title="Traffic graph" subtitle={`RX ${formatBandwidth(selectedPortBandwidth?.rx ?? null)} · TX ${formatBandwidth(selectedPortBandwidth?.tx ?? null)} · ${selectedPortTrafficPoints.length} intervals`} points={selectedPortTrafficPoints} unit="Mbps" emptyTitle="Waiting for traffic samples" emptyDescription="This port needs two successful SNMP counter samples before a rate graph can be calculated." testId={`port-traffic-graph-${selectedPort.ifIndex}`} /><div className="form-note">Traffic is calculated from RX/TX counter deltas. If the graph is empty, wait for another successful poll or choose a longer history window.</div></div></Modal> : null}
      {editingMib ? <Modal title="Edit MIB polling settings" close={() => setEditingMib(false)}><form onSubmit={saveMibSettings}><div className="form-grid"><Field label="MIB profile" value={mibForm.mibProfile} onChange={(value) => setMibForm({ ...mibForm, mibProfile: value })} select options={['Auto / vendor', 'ZTE', 'VSOL', 'Generic OLT']} /><Field label="PON count OID" value={mibForm.ponCountOid} placeholder="Optional override" onChange={(value) => setMibForm({ ...mibForm, ponCountOid: value })} /><Field label="ONU count OID" value={mibForm.onuCountOid} placeholder="Optional override" onChange={(value) => setMibForm({ ...mibForm, onuCountOid: value })} /><Field label="RX power root" value={mibForm.rxPowerRoot} placeholder="Optional override" onChange={(value) => setMibForm({ ...mibForm, rxPowerRoot: value })} /><Field label="TX power root" value={mibForm.txPowerRoot} placeholder="Optional override" onChange={(value) => setMibForm({ ...mibForm, txPowerRoot: value })} /></div><div className="form-note">Leave an OID blank to use the selected vendor profile. The next poll uses these saved settings.</div><div className="form-actions"><button type="button" className="button button-quiet" onClick={() => setEditingMib(false)} data-testid="button-cancel-mib-settings">Cancel</button><button className="button button-primary" disabled={updateMibSettings.isPending} data-testid="button-save-mib-settings">{updateMibSettings.isPending ? <Loader2 size={14} className="spin" /> : <Check size={14} />} Save settings</button></div></form></Modal> : null}
   </section>;
@@ -1037,6 +1161,7 @@ function DeviceDetails({ deviceId, close }: { deviceId: string; close: () => voi
 function Devices() {
   const queryClient = useQueryClient();
   const devices = useGetDevices();
+  const vpnSites = useGetVpnSites();
   const createDevice = useCreateDevice();
   const deleteDevice = useDeleteDevice();
   const [showAdd, setShowAdd] = useState(false);
@@ -1044,9 +1169,9 @@ function Devices() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Device | null>(null);
   const [toast, setToast] = useState('');
-  const [form, setForm] = useState({ name: '', ipAddress: '', vendor: 'Cisco', type: 'Router', location: '', snmpVersion: 'v2c', snmpCommunity: 'public', mibProfile: '', ponCountOid: '', onuCountOid: '', rxPowerRoot: '', txPowerRoot: '' });
+  const [form, setForm] = useState({ name: '', ipAddress: '', vendor: 'Cisco', type: 'Router', location: '', vpnSiteId: '', snmpVersion: 'v2c', snmpCommunity: 'public', mibProfile: '', ponCountOid: '', onuCountOid: '', rxPowerRoot: '', txPowerRoot: '' });
   const items = (devices.data ?? []).filter((d) => `${d.name} ${d.ipAddress} ${d.vendor} ${d.type}`.toLowerCase().includes(search.toLowerCase()));
-  const submit = (e: FormEvent) => { e.preventDefault(); createDevice.mutate({ data: { ...form, mibProfile: form.mibProfile || null, ponCountOid: form.ponCountOid || null, onuCountOid: form.onuCountOid || null, rxPowerRoot: form.rxPowerRoot || null, txPowerRoot: form.txPowerRoot || null, snmpVersion: form.snmpVersion as 'v1' | 'v2c' | 'v3' } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getGetDevicesQueryKey() }); setShowAdd(false); setToast('Device added to the monitoring fleet'); setTimeout(() => setToast(''), 2800); } }); };
+  const submit = (e: FormEvent) => { e.preventDefault(); const matchingSite = vpnSites.data?.find((site) => ipMatchesCidr(form.ipAddress, site.lanCidr)); createDevice.mutate({ data: { ...form, vpnSiteId: form.vpnSiteId || matchingSite?.id || null, mibProfile: form.mibProfile || null, ponCountOid: form.ponCountOid || null, onuCountOid: form.onuCountOid || null, rxPowerRoot: form.rxPowerRoot || null, txPowerRoot: form.txPowerRoot || null, snmpVersion: form.snmpVersion as 'v1' | 'v2c' | 'v3' } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getGetDevicesQueryKey() }); setShowAdd(false); setToast(matchingSite ? `Device linked to ${matchingSite.name}` : 'Device added to the monitoring fleet'); setTimeout(() => setToast(''), 2800); } }); };
   const confirmDelete = () => {
     if (!deleteTarget) return;
     deleteDevice.mutate({ deviceId: deleteTarget.id }, {
@@ -1123,6 +1248,7 @@ function Companies() {
 }
 
 function Plans() {
+  const ADMIN_PAYMENT_PAGE_SIZE = 20;
   const storedRole = storedPortalRole();
   const userProfile = useGetUserProfile();
   const role = userProfile.data?.role ?? storedRole;
@@ -1134,6 +1260,25 @@ function Plans() {
   const companies = useGetCompanies({ query: { enabled: isSuperAdmin, queryKey: getGetCompaniesQueryKey() } });
   const companyProfile = useGetCompanyProfile({ query: { enabled: roleQueryReady && !isSuperAdmin, queryKey: getGetCompanyProfileQueryKey() } });
   const paymentHistory = useGetPaymentRecords({ query: { enabled: !isSuperAdmin, queryKey: getGetPaymentRecordsQueryKey() } });
+  const [adminPaymentPage, setAdminPaymentPage] = useState(1);
+  const [adminPaymentFilters, setAdminPaymentFilters] = useState<AdminPaymentFilters>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get('status');
+    return {
+      companyId: params.get('companyId') ?? '',
+      status: status === 'pending' || status === 'paid' || status === 'failed' ? status : '',
+    };
+  });
+  const adminPaymentQuery = {
+    page: adminPaymentPage,
+    pageSize: ADMIN_PAYMENT_PAGE_SIZE,
+    companyId: adminPaymentFilters.companyId || undefined,
+    status: adminPaymentFilters.status || undefined,
+  };
+  const adminPaymentHistory = useGetAdminPaymentRecords(
+    adminPaymentQuery,
+    { query: { enabled: isSuperAdmin, queryKey: getGetAdminPaymentRecordsQueryKey(adminPaymentQuery) } },
+  );
   const adminProfile = useGetAdminCompanyProfile({ query: { enabled: roleQueryReady && isSuperAdmin, queryKey: getGetAdminCompanyProfileQueryKey() } });
   const checkout = useCreateCheckout();
   const createPlan = useCreatePlan();
@@ -1144,6 +1289,7 @@ function Plans() {
   const [planDraft, setPlanDraft] = useState<(Plan & { gstRate: number }) | null>(null);
   const [invoicePlan, setInvoicePlan] = useState<(Plan & { gstRate: number }) | null>(null);
   const [invoicePayment, setInvoicePayment] = useState<TenantPaymentRecord | null>(null);
+  const [invoiceCompany, setInvoiceCompany] = useState<{ name: string; email: string; gstNumber?: string | null; address?: string; contactNumber?: string } | undefined>();
   const [adminForm, setAdminForm] = useState({ companyName: '', address: '', gstNumber: '', phoneNumber: '', email: '', logoPath: '' });
   const [logoPreview, setLogoPreview] = useState('');
   useEffect(() => {
@@ -1161,6 +1307,16 @@ function Plans() {
     if (!userProfile.data || userProfile.data.role === storedRole) return;
     localStorage.setItem('hydranms-role', userProfile.data.role);
   }, [storedRole, userProfile.data]);
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    const params = new URLSearchParams(window.location.search);
+    if (adminPaymentFilters.companyId) params.set('companyId', adminPaymentFilters.companyId);
+    else params.delete('companyId');
+    if (adminPaymentFilters.status) params.set('status', adminPaymentFilters.status);
+    else params.delete('status');
+    const query = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+  }, [adminPaymentFilters, isSuperAdmin]);
   const fallbacks: Plan[] = [{ id: 'starter', name: 'Starter', price: 1499, interval: 'monthly', deviceLimit: 50, popular: false, features: ['50 monitored devices', '60 second polling', 'Email alerts'] }, { id: 'scale', name: 'Scale', price: 3999, interval: 'monthly', deviceLimit: 250, popular: true, features: ['250 monitored devices', '30 second polling', 'Telegram + email channels', 'Priority support'] }, { id: 'operator', name: 'Operator', price: 7999, interval: 'monthly', deviceLimit: 1000, popular: false, features: ['1,000 monitored devices', '15 second polling', 'Multi-user operations', 'Dedicated support PIN'] }];
   const items = (plans.data?.length ? plans.data : fallbacks).map((plan) => ({ ...plan, gstRate: 18 }));
   const company = companies.data?.[0];
@@ -1224,7 +1380,7 @@ function Plans() {
     }
     try {
       const upload = await requestStorageUpload.mutateAsync({ data: { name: file.name, size: file.size, contentType: file.type } });
-      const response = await fetch(upload.uploadURL, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
+      const response = await uploadStorageFile(upload.uploadURL, file);
       if (!response.ok) throw new Error('The logo upload did not complete.');
       setAdminForm((current) => ({ ...current, logoPath: upload.objectPath }));
       setLogoPreview(URL.createObjectURL(file));
@@ -1300,6 +1456,11 @@ function Plans() {
       {selectedPaymentPlan ? <InvoiceModal plan={selectedPaymentPlan} company={tenantInvoiceCompany} payment={invoicePayment} close={() => setInvoicePayment(null)} /> : null}
     </main>;
   }
+    const adminPaymentRows = adminPaymentHistory.data?.items ?? [];
+    const updateAdminPaymentFilters = (next: Partial<AdminPaymentFilters>) => {
+      setAdminPaymentPage(1);
+      setAdminPaymentFilters((current) => ({ ...current, ...next }));
+    };
   return <main className="content"><PageHead eyebrow="Control plane / commercial" title="Plans & billing" subtitle="Manage subscriptions, GST invoices, and tenant checkout from one place." action={<button className="button button-primary" onClick={openNewPlan} data-testid="button-add-plan"><Plus size={14} /> Add plan</button>} />
     <section className="card panel" style={{ marginTop: 16 }} data-testid="section-superadmin-company-details">
       <div className="panel-header">
@@ -1328,7 +1489,30 @@ function Plans() {
      <div className="grid plan-grid">{items.map((plan) => { const amounts = billingAmounts(plan.price); return <section className={`card plan-card ${plan.popular ? 'popular' : ''}`} key={plan.id} data-testid={`card-plan-${plan.id}`}>{plan.popular ? <div className="popular-tag">Most chosen</div> : null}<div className="plan-card-actions"><button className="icon-button" aria-label={`Edit ${plan.name} plan`} onClick={() => setPlanDraft(plan)} data-testid={`button-edit-plan-${plan.id}`}><Pencil size={13} /></button></div><div className="panel-kicker">Hydra tier</div><div className="plan-name" style={{ marginTop: 8 }}>{plan.name}</div><div className="plan-price">₹{amounts.totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}<span> total / {plan.interval}</span></div><div className="billing-breakdown"><span>Plan amount <strong>₹{amounts.subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></span><span>GST ({BILLING_GST_RATE}%) <strong>₹{amounts.gstAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></span></div><div style={{ fontSize: 10, color: 'hsl(var(--muted-foreground))' }}>Up to {plan.deviceLimit.toLocaleString()} monitored devices · Total sent to AblePay</div><ul className="feature-list">{plan.features.map((feature) => <li key={feature}><Check size={13} />{feature}</li>)}</ul><div className="plan-card-buttons"><button className={`button ${plan.popular ? 'button-primary' : 'button-quiet'}`} onClick={() => choose(plan)} disabled={checkout.isPending} data-testid={`button-choose-plan-${plan.id}`}>{checkout.isPending ? <Loader2 size={14} /> : <CreditCard size={14} />} Choose · ₹{amounts.totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</button><button className="button button-quiet" onClick={() => setInvoicePlan(plan)} disabled={!adminProfile.data} data-testid={`button-invoice-plan-${plan.id}`}><FileText size={14} /> GST invoice</button></div></section>; })}</div>
     {plans.isError ? <p className="page-subtitle" style={{ marginTop: 14 }}>Live plan catalog is unavailable; showing the standard catalog.</p> : null}
     {planDraft ? <Modal title={planDraft.id ? `Modify ${planDraft.name}` : 'Add a billing plan'} close={() => setPlanDraft(null)}><form onSubmit={savePlan}><div className="form-grid"><Field label="Plan name" value={planDraft.name} onChange={(value) => setPlanDraft({ ...planDraft, name: value })} required /><Field label="Price (INR)" value={String(planDraft.price)} type="number" onChange={(value) => setPlanDraft({ ...planDraft, price: Number(value) })} required /><Field label="Billing interval" value={planDraft.interval} select options={['monthly', 'yearly']} onChange={(value) => setPlanDraft({ ...planDraft, interval: value as 'monthly' | 'yearly' })} /><Field label="Device limit" value={String(planDraft.deviceLimit)} type="number" onChange={(value) => setPlanDraft({ ...planDraft, deviceLimit: Number(value) })} required /><Field label="GST rate (%)" value={String(planDraft.gstRate)} type="number" onChange={(value) => setPlanDraft({ ...planDraft, gstRate: Number(value) })} required /><Field label="Features (comma separated)" value={planDraft.features.join(', ')} onChange={(value) => setPlanDraft({ ...planDraft, features: value.split(',').map((item) => item.trim()).filter(Boolean) })} /></div><p className="form-note">AblePay requires plans to be at least ₹100. Your merchant account minimum can be overridden with ABLEPAY_MIN_AMOUNT.</p><label className="check-row"><input type="checkbox" checked={planDraft.popular} onChange={(e) => setPlanDraft({ ...planDraft, popular: e.target.checked })} /> Mark as most chosen plan</label><div className="form-actions"><button type="button" className="button button-quiet" onClick={() => setPlanDraft(null)}>Cancel</button><button className="button button-primary" disabled={planSavePending} data-testid="button-save-plan">{planSavePending ? <Loader2 size={14} /> : <Check size={14} />} {planSavePending ? 'Saving…' : 'Save plan'}</button></div></form></Modal> : null}
-    {invoicePlan ? <InvoiceModal plan={invoicePlan} company={company} issuer={adminProfile.data} close={() => setInvoicePlan(null)} /> : null}
+     <section className="card panel" style={{ marginTop: 16 }} data-testid="section-superadmin-billing-records">
+       <div className="panel-header"><div><div className="panel-kicker">Company billing ledger</div><div className="panel-title">All purchase records</div><div className="detail-updated">Every checkout and payment reference is visible to super-admins across all companies.</div></div><FileText size={16} /></div>
+       <div className="table-toolbar" style={{ marginTop: 14 }}>
+         <div className="top-actions">
+           <select className="field" value={adminPaymentFilters.companyId} onChange={(event) => updateAdminPaymentFilters({ companyId: event.target.value })} aria-label="Filter billing by company" data-testid="select-admin-payment-company">
+             <option value="">All companies</option>
+             {(companies.data ?? []).map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
+           </select>
+           <select className="field" value={adminPaymentFilters.status} onChange={(event) => updateAdminPaymentFilters({ status: event.target.value as AdminPaymentStatus | '' })} aria-label="Filter billing by payment status" data-testid="select-admin-payment-status">
+             <option value="">All statuses</option>
+             <option value="pending">Pending</option>
+             <option value="paid">Paid</option>
+             <option value="failed">Failed</option>
+           </select>
+           <button className="button button-quiet" onClick={() => adminPaymentHistory.refetch()} disabled={adminPaymentHistory.isFetching} data-testid="button-refresh-admin-payments">
+             {adminPaymentHistory.isFetching ? <Loader2 size={13} /> : <RefreshCw size={13} />} Refresh
+           </button>
+         </div>
+       </div>
+      {adminPaymentHistory.isLoading ? <div className="detail-loading"><div className="skeleton" /><div className="skeleton" /></div> : adminPaymentHistory.isError ? <ErrorState retry={() => adminPaymentHistory.refetch()} /> : adminPaymentRows.length ? <div className="table-scroll"><table className="data-table"><thead><tr><th>Company</th><th>Invoice</th><th>Plan</th><th>Total paid</th><th>Status</th><th>Gateway ref.</th><th>Bank URN</th><th>Date</th><th /></tr></thead><tbody>{adminPaymentRows.map((payment) => <tr key={payment.id} data-testid={`row-admin-payment-${payment.id}`}><td><div className="device-name">{payment.companyName}</div><div className="device-ip">{payment.companyEmail} · {payment.companySubdomain}</div></td><td className="mono">{payment.invoiceNumber}</td><td>{payment.planName}</td><td className="mono">₹{payment.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })} {payment.currency}</td><td><span className={`status status-${payment.status === 'paid' ? 'online' : payment.status === 'failed' ? 'critical' : 'discovering'}`}>{payment.status}</span></td><td className="mono">{payment.gatewayReference ?? 'Pending'}</td><td className="mono">{payment.bankUrn ?? 'Not returned'}</td><td className="mono">{new Date(payment.paidAt ?? payment.createdAt).toLocaleDateString('en-IN')}</td><td><button className="button button-quiet" onClick={() => { setInvoicePayment(payment); setInvoiceCompany({ name: payment.companyName, email: payment.companyEmail, gstNumber: payment.companyGstNumber, address: payment.companyAddress, contactNumber: payment.companyContactNumber }); }} data-testid={`button-admin-invoice-${payment.id}`}><FileText size={13} /> Invoice</button></td></tr>)}</tbody></table></div> : <EmptyState icon={FileText} title="No company billing records yet" description="Completed and pending plan purchases will appear here after a company starts checkout." />}
+      {!adminPaymentHistory.isLoading && !adminPaymentHistory.isError && adminPaymentHistory.data ? <div className="form-actions" style={{ justifyContent: 'space-between', alignItems: 'center', marginTop: 14 }} data-testid="status-admin-payment-pagination"><span className="form-note">Page {adminPaymentHistory.data.page} · showing {adminPaymentRows.length} of {adminPaymentHistory.data.total} records</span><button className="button button-quiet" disabled={!adminPaymentHistory.data.hasMore || adminPaymentHistory.isFetching} onClick={() => setAdminPaymentPage((page) => page + 1)} data-testid="button-admin-payment-next">{adminPaymentHistory.isFetching ? <Loader2 size={13} /> : <ChevronRight size={13} />} {adminPaymentHistory.data.hasMore ? 'Next page' : 'No more records'}</button></div> : null}
+     </section>
+     {invoicePayment ? <InvoiceModal plan={{ id: invoicePayment.planId, name: invoicePayment.planName, price: invoicePayment.planPrice, interval: invoicePayment.planInterval, deviceLimit: invoicePayment.planDeviceLimit, features: [], popular: false, gstRate: invoicePayment.gstRate }} company={invoiceCompany ?? company} issuer={adminProfile.data} payment={invoicePayment} close={() => { setInvoicePayment(null); setInvoiceCompany(undefined); }} /> : null}
+     {invoicePlan ? <InvoiceModal plan={invoicePlan} company={company} issuer={adminProfile.data} close={() => setInvoicePlan(null)} /> : null}
     {toast ? <div className="toast" data-testid="status-billing-action"><CheckCircle2 size={14} style={{ verticalAlign: 'middle', marginRight: 7, color: 'hsl(var(--sidebar-primary))' }} />{toast}</div> : null}</main>;
 }
 
@@ -1386,7 +1570,7 @@ function SuperAdminCompanyDetails() {
     }
     try {
       const upload = await requestUpload.mutateAsync({ data: { name: file.name, size: file.size, contentType: file.type, purpose: 'company_logo' } });
-      const response = await fetch(upload.uploadURL, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
+      const response = await uploadStorageFile(upload.uploadURL, file);
       if (!response.ok) throw new Error('The logo upload did not complete.');
       setForm((current) => ({ ...current, logoPath: upload.objectPath }));
       setLogoPreview(URL.createObjectURL(file));
@@ -1544,7 +1728,7 @@ function UserProfileSettings() {
     }
     try {
       const upload = await requestUpload.mutateAsync({ data: { name: file.name, size: file.size, contentType: file.type, purpose: 'profile' } });
-      const response = await fetch(upload.uploadURL, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
+      const response = await uploadStorageFile(upload.uploadURL, file);
       if (!response.ok) throw new Error('The profile picture upload did not complete.');
       setForm((current) => ({ ...current, avatarPath: upload.objectPath }));
       setAvatarPreview(URL.createObjectURL(file));
@@ -2181,6 +2365,7 @@ function AppRouter() {
       <Route path="/">{role === 'super_admin' ? <SuperAdminOverview /> : <Dashboard />}</Route>
       <Route path="/profile" component={ProfilePage} />
       <Route path="/devices" component={Devices} />
+      <Route path="/vpn" component={VpnPage} />
       <Route path="/alerts" component={Alerts} />
       <Route path="/discovery" component={Discovery} />
       <Route path="/tickets" component={IncidentTickets} />
@@ -2194,6 +2379,7 @@ function AppRouter() {
     <Route><Shell><Switch>
       <Route path="/profile" component={ProfilePage} />
       <Route path="/devices" component={Devices} />
+      <Route path="/vpn" component={VpnPage} />
       <Route path="/alerts" component={Alerts} />
       <Route path="/discovery" component={Discovery} />
       <Route path="/tickets" component={IncidentTickets} />

@@ -77,6 +77,7 @@ export async function credentialByLabel(
 export async function upsertDevice(input: {
   id?: string;
   companyId: string;
+  vpnSiteId?: string | null;
   name: string;
   ipAddress: string;
   vendor: string;
@@ -118,6 +119,7 @@ export async function upsertDevice(input: {
         type: input.type,
         location: input.location,
         credentialId: input.credentialId,
+        vpnSiteId: input.vpnSiteId ?? null,
         updatedAt: new Date(),
         ...mibSettings,
       })
@@ -127,6 +129,7 @@ export async function upsertDevice(input: {
   await db.insert(monitoredDevices).values({
     id,
     companyId: input.companyId,
+    vpnSiteId: input.vpnSiteId ?? null,
     name: input.name,
     ipAddress: input.ipAddress,
     vendor: input.vendor,
@@ -151,6 +154,25 @@ export async function updateDeviceMibSettings(
     onuCountOid: string | null;
     rxPowerRoot: string | null;
     txPowerRoot: string | null;
+  },
+) {
+  const updated = await db
+    .update(monitoredDevices)
+    .set({
+      ...input,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(monitoredDevices.id, deviceId), eq(monitoredDevices.companyId, companyId)))
+    .returning();
+  return updated[0] ?? null;
+}
+
+export async function updateDeviceWebLoginSettings(
+  companyId: string,
+  deviceId: string,
+  input: {
+    webLoginProtocol: "http" | "https" | null;
+    webLoginPort: number | null;
   },
 ) {
   const updated = await db

@@ -756,6 +756,48 @@ export async function authContextFromToken(token: string): Promise<AuthContext |
   };
 }
 
+export async function authContextFromSessionId(
+  sessionId: string,
+  expectedUserId: string,
+  expectedCompanyId: string,
+): Promise<AuthContext | null> {
+  const result = await db
+    .select({
+      session: authSessions,
+      user: portalUsers,
+    })
+    .from(authSessions)
+    .innerJoin(portalUsers, eq(authSessions.userId, portalUsers.id))
+    .where(eq(authSessions.id, sessionId))
+    .limit(1);
+  const row = result[0];
+  if (
+    !row ||
+    row.session.userId !== expectedUserId ||
+    (row.user.role !== "super_admin" &&
+      (row.session.companyId !== expectedCompanyId || row.user.companyId !== expectedCompanyId)) ||
+    row.session.revokedAt ||
+    row.session.expiresAt <= new Date() ||
+    row.user.status !== "active"
+  ) {
+    return null;
+  }
+  return {
+    user: {
+      id: row.user.id,
+      companyId: row.user.companyId,
+      username: row.user.username,
+      displayName: row.user.displayName,
+      email: row.user.email,
+      avatarPath: row.user.avatarPath,
+      role: row.user.role,
+      status: row.user.status,
+    },
+    companyId: row.user.role === "super_admin" ? expectedCompanyId : row.session.companyId,
+    sessionId: row.session.id,
+  };
+}
+
 export async function revokeSession(sessionId: string): Promise<void> {
   await db
     .update(authSessions)
@@ -1617,7 +1659,7 @@ export async function listCompanyPaymentRecords(companyId: string) {
       .select()
       .from(checkoutSessions)
       .where(eq(checkoutSessions.companyId, companyId))
-      .orderBy(desc(checkoutSessions.createdAt))
+      .orderBy(desc(checkoutSessions.createdAt), desc(checkoutSessions.id))
       .limit(25),
     db
       .select()
@@ -1627,7 +1669,15 @@ export async function listCompanyPaymentRecords(companyId: string) {
       .limit(250),
   ]);
 
-  return Promise.all(checkouts.map(async (checkout) => {
+  return Promise.all(checkouts.map((checkout) => paymentRecordForCheckout(checkout, events)));
+}
+
+async function paymentRecordForCheckout(
+  checkout: typeof checkoutSessions.$inferSelect,
+  events: Array<typeof paymentWebhookEvents.$inferSelect>,
+  company?: typeof companies.$inferSelect,
+  suppliedPlan?: typeof plans.$inferSelect,
+) {
     const event = events.find((candidate) => {
       const values = paymentPayloadValues(candidate.payload);
       const references = [
@@ -1638,7 +1688,7 @@ export async function listCompanyPaymentRecords(companyId: string) {
       ].filter((value): value is string => typeof value === "string");
       return references.includes(checkout.id) || (checkout.providerSessionId ? references.includes(checkout.providerSessionId) : false);
     });
-    const plan = await planById(checkout.planId);
+    const plan = suppliedPlan ?? await planById(checkout.planId);
     const payload = event?.payload ?? {};
     const amounts = ablePayAmounts(plan?.price ?? checkout.amount);
     return {
@@ -1677,8 +1727,91 @@ export async function listCompanyPaymentRecords(companyId: string) {
       ]),
       createdAt: checkout.createdAt.toISOString(),
       paidAt: event?.processedAt?.toISOString() ?? null,
+      ...(company
+        ? {
+            companyId: company.id,
+            companyName: company.name,
+            companyEmail: company.email,
+            companySubdomain: company.subdomain,
+            companyGstNumber: company.gstNumber,
+            companyAddress: company.address,
+            companyContactNumber: company.contactNumber,
+          }
+        : {}),
     };
-  }));
+}
+
+export async function listAdminPaymentRecords(input: {
+  page: number;
+  pageSize: number;
+  companyId?: string;
+  status?: "pending" | "paid" | "failed";
+}) {
+  const offset = (input.page - 1) * input.pageSize;
+  const filters = [
+    ...(input.companyId ? [eq(checkoutSessions.companyId, input.companyId)] : []),
+    ...(input.status ? [eq(checkoutSessions.status, input.status)] : []),
+  ];
+  const where = filters.length ? and(...filters) : undefined;
+  const [totalResult, checkoutRows] = await Promise.all([
+    db
+      .select({ value: count() })
+      .from(checkoutSessions)
+      .innerJoin(companies, eq(checkoutSessions.companyId, companies.id))
+      .where(where),
+    db
+      .select({ checkout: checkoutSessions, company: companies })
+      .from(checkoutSessions)
+      .innerJoin(companies, eq(checkoutSessions.companyId, companies.id))
+      .where(where)
+      .orderBy(desc(checkoutSessions.createdAt), desc(checkoutSessions.id))
+      .limit(input.pageSize)
+      .offset(offset),
+  ]);
+  const total = totalResult[0]?.value ?? 0;
+  if (!checkoutRows.length) {
+    return {
+      items: [],
+      page: input.page,
+      pageSize: input.pageSize,
+      total,
+      hasMore: false,
+    };
+  }
+
+  const checkouts = checkoutRows.map(({ checkout }) => checkout);
+  const references = checkouts.flatMap((checkout) => [
+    checkout.id,
+    ...(checkout.providerSessionId ? [checkout.providerSessionId] : []),
+  ]);
+  const referenceConditions = references.flatMap((reference) =>
+    ["checkoutId", "orderId", "order_id", "reference"].flatMap((key) => [
+      sql`${paymentWebhookEvents.payload} @> ${JSON.stringify({ [key]: reference })}::jsonb`,
+      sql`${paymentWebhookEvents.payload} @> ${JSON.stringify({ data: { [key]: reference } })}::jsonb`,
+    ]),
+  );
+  const planIds = [...new Set(checkouts.map((checkout) => checkout.planId))];
+  const [events, planRows] = await Promise.all([
+    db
+      .select()
+      .from(paymentWebhookEvents)
+      .where(and(eq(paymentWebhookEvents.provider, "ablepay"), or(...referenceConditions)))
+      .orderBy(desc(paymentWebhookEvents.receivedAt)),
+    db.select().from(plans).where(inArray(plans.id, planIds)),
+  ]);
+  const planByIdMap = new Map(planRows.map((plan) => [plan.id, plan]));
+
+  return {
+    items: await Promise.all(
+      checkoutRows.map(({ checkout, company }) =>
+        paymentRecordForCheckout(checkout, events, company, planByIdMap.get(checkout.planId)),
+      ),
+    ),
+    page: input.page,
+    pageSize: input.pageSize,
+    total,
+    hasMore: offset + checkoutRows.length < total,
+  };
 }
 
 export async function adminDashboardSummary() {

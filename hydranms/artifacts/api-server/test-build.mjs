@@ -23,6 +23,8 @@ await build({
     "./src/device-details.test.ts",
     "./src/nms-alert-rules.test.ts",
     "./src/network-ping.test.ts",
+    "./src/olt-web-proxy.test.ts",
+    "./src/local-file-storage.test.ts",
   ],
   bundle: true,
   platform: "node",

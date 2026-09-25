@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { once } from "node:events";
+import { request as nodeHttpRequest } from "node:http";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { Server } from "node:http";
@@ -19,10 +20,12 @@ import {
   portalUsers,
   snmpCredentials,
   supportTickets,
+  vpnSites,
 } from "@workspace/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { GetDeviceDetailsResponse } from "@workspace/api-zod";
 import { credentialById, recordPoll, upsertDevice } from "./lib/nms-store";
+import { rewriteOltDeviceUrls } from "./lib/olt-proxy";
 import type { PollResult } from "./lib/snmp-poller";
 import { encryptSecret } from "./lib/snmp-crypto";
 import {
@@ -158,6 +161,53 @@ async function request(
   };
 }
 
+async function requestAtHost(
+  path: string,
+  host: string,
+  options: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: Record<string, unknown>;
+  } = {},
+): Promise<HttpResponse> {
+  const port = Number(new URL(baseUrl).port);
+  return new Promise((resolve, reject) => {
+    const responseHeaders = new Headers();
+    const outgoing = nodeHttpRequest({
+      hostname: "127.0.0.1",
+      port,
+      method: options.method ?? "GET",
+      path,
+      headers: { host, ...options.headers },
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk: Buffer | string) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+      response.on("end", () => {
+        for (const [name, value] of Object.entries(response.headers)) {
+          if (typeof value === "string") responseHeaders.set(name, value);
+          else if (Array.isArray(value)) value.forEach((item) => responseHeaders.append(name, item));
+        }
+        const text = Buffer.concat(chunks).toString("utf8");
+        let body: any = null;
+        if (text) {
+          try {
+            body = JSON.parse(text);
+          } catch {
+            body = text;
+          }
+        }
+        resolve({ status: response.statusCode ?? 0, body, headers: responseHeaders });
+      });
+    });
+    outgoing.on("error", reject);
+    if (options.body) {
+      outgoing.setHeader("Content-Type", "application/json");
+      outgoing.write(JSON.stringify(options.body));
+    }
+    outgoing.end();
+  });
+}
+
 function sessionCookie(response: HttpResponse): string {
   const setCookie = response.headers.get("set-cookie");
   assert.ok(setCookie, "login should set a session cookie");
@@ -277,6 +327,7 @@ async function cleanup(companyIds: string[]): Promise<void> {
   await db.delete(notificationDeliveries).where(inArray(notificationDeliveries.companyId, companyIds));
   await db.delete(incidentTickets).where(inArray(incidentTickets.companyId, companyIds));
   await db.delete(monitoredDevices).where(inArray(monitoredDevices.companyId, companyIds));
+  await db.delete(vpnSites).where(inArray(vpnSites.companyId, companyIds));
   await db.delete(supportTickets).where(inArray(supportTickets.companyId, companyIds));
   await db.delete(alertSettings).where(inArray(alertSettings.companyId, companyIds));
   await db.delete(auditLogs).where(inArray(auditLogs.companyId, companyIds));
@@ -1326,6 +1377,158 @@ test("contact submissions validate, persist, stay private, and rate limit", asyn
     if (contactRetentionIds.length) {
       await db.delete(contactSubmissions).where(inArray(contactSubmissions.id, contactRetentionIds));
     }
+    await cleanup(companyIds);
+  }
+});
+
+test("isolates OLT access grants to the signed-in tenant and device", async () => {
+  assert.ok(process.env.DATABASE_URL, "DATABASE_URL is required for OLT proxy security tests");
+  assert.ok(process.env.SESSION_SECRET, "SESSION_SECRET is required for OLT proxy security tests");
+  await ensurePortalData();
+
+  const originalProxyDomain = process.env.OLT_PROXY_BASE_DOMAIN;
+  process.env.OLT_PROXY_BASE_DOMAIN = "olt.hydranms.in";
+  const companyIds: string[] = [];
+  let server: Server | undefined;
+  try {
+    server = await startServer();
+    const tenantA = registration("olt-tenant-a");
+    const tenantB = registration("olt-tenant-b");
+    const registeredA = await request("/api/auth/register", { method: "POST", body: tenantA });
+    const registeredB = await request("/api/auth/register", { method: "POST", body: tenantB });
+    assert.equal(registeredA.status, 201, JSON.stringify(registeredA.body));
+    assert.equal(registeredB.status, 201, JSON.stringify(registeredB.body));
+    tenantA.companyId = registeredA.body.company.id;
+    tenantB.companyId = registeredB.body.company.id;
+    companyIds.push(tenantA.companyId, tenantB.companyId);
+    const [authA, authB] = await Promise.all([
+      login(tenantA.username, tenantA.password),
+      login(tenantB.username, tenantB.password),
+    ]);
+    delete process.env.OLT_PROXY_BASE_DOMAIN;
+    const notConfigured = await request("/api/devices/unassigned/olt-login", {
+      method: "POST",
+      headers: { cookie: authA.cookie, origin: `https://${tenantA.subdomain}.hydranms.in` },
+      body: { protocol: "http" },
+    });
+    assert.equal(notConfigured.status, 503, "the isolated proxy must fail explicitly when its hostname is not configured");
+    process.env.OLT_PROXY_BASE_DOMAIN = "olt.hydranms.in";
+
+    const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const siteId = `vpn-olt-${unique}`;
+    await db.insert(vpnSites).values({
+      id: siteId,
+      companyId: tenantA.companyId,
+      name: `OLT fixture ${unique}`,
+      lanCidr: "192.0.2.0/24",
+      tunnelAddress: `10.91.${Math.floor(Math.random() * 200) + 20}.254/32`,
+      routerOsVersion: "7.x",
+      clientPublicKey: `olt-test-${unique}`,
+      encryptedClientPrivateKey: "test-only-encrypted-value",
+      status: "active",
+      routeState: "applied",
+    });
+    const deviceId = await upsertDevice({
+      companyId: tenantA.companyId,
+      vpnSiteId: siteId,
+      name: "OLT proxy fixture",
+      ipAddress: "192.0.2.10",
+      vendor: "Fixture Vendor",
+      type: "OLT",
+      location: "Test Lab",
+      credentialId: null,
+    });
+    const fixtureLoginPage = Buffer.from(
+      `<form action="http://192.0.2.10:80/login"><script src="//192.0.2.10/app.js"></script></form>`,
+    );
+    const rewrittenLoginPage = rewriteOltDeviceUrls(
+      fixtureLoginPage,
+      "text/html",
+      "192.0.2.10",
+      `${deviceId}.olt.hydranms.in`,
+    ).toString("utf8");
+    assert.match(rewrittenLoginPage, new RegExp(`action="https://${deviceId}\\.olt\\.hydranms\\.in/login"`));
+    assert.match(rewrittenLoginPage, new RegExp(`src="https://${deviceId}\\.olt\\.hydranms\\.in/app\\.js"`));
+    const unassignedDeviceId = await upsertDevice({
+      companyId: tenantA.companyId,
+      name: "Unassigned OLT fixture",
+      ipAddress: "192.0.2.11",
+      vendor: "Fixture Vendor",
+      type: "OLT",
+      location: "Test Lab",
+      credentialId: null,
+    });
+    const portalOrigin = `https://${tenantA.subdomain}.hydranms.in`;
+    const unavailable = await request(`/api/devices/${unassignedDeviceId}/olt-login`, {
+      method: "POST",
+      headers: { cookie: authA.cookie, origin: portalOrigin },
+      body: { protocol: "http" },
+    });
+    assert.equal(unavailable.status, 409, "devices without an active WireGuard route cannot be proxied");
+    const grantResponse = await request(`/api/devices/${deviceId}/olt-login`, {
+      method: "POST",
+      headers: { cookie: authA.cookie, origin: portalOrigin },
+      body: { protocol: "http" },
+    });
+    assert.equal(grantResponse.status, 200, JSON.stringify(grantResponse.body));
+    assert.equal(
+      grantResponse.body.iframeUrl,
+      `https://${deviceId}.olt.hydranms.in/__hydranms/bootstrap`,
+    );
+    assert.notEqual(new URL(grantResponse.body.iframeUrl).origin, portalOrigin);
+    assert.equal(typeof grantResponse.body.grant, "string");
+
+    const bootstrap = await requestAtHost("/__hydranms/bootstrap", `${deviceId}.olt.hydranms.in`, {
+      headers: { "x-forwarded-proto": "https" },
+    });
+    assert.equal(bootstrap.status, 200, String(bootstrap.body));
+    assert.match(bootstrap.headers.get("content-security-policy") ?? "", /frame-ancestors/);
+    assert.match(String(bootstrap.body), /Connecting securely to the device/);
+
+    const wrongDeviceExchange = await requestAtHost("/__hydranms/session", `another-${deviceId}.olt.hydranms.in`, {
+      method: "POST",
+      headers: { "x-forwarded-proto": "https", origin: `https://${deviceId}.olt.hydranms.in` },
+      body: { grant: grantResponse.body.grant, portalOrigin },
+    });
+    assert.equal(wrongDeviceExchange.status, 403, "a device grant cannot be exchanged on a different device host");
+    const session = await requestAtHost("/__hydranms/session", `${deviceId}.olt.hydranms.in`, {
+      method: "POST",
+      headers: { "x-forwarded-proto": "https", origin: `https://${deviceId}.olt.hydranms.in` },
+      body: { grant: grantResponse.body.grant, portalOrigin },
+    });
+    assert.equal(session.status, 204);
+    const proxyCookie = session.headers.get("set-cookie") ?? "";
+    assert.match(proxyCookie, /^__Host-olt_session=/);
+    assert.match(proxyCookie, /HttpOnly/);
+    assert.match(proxyCookie, /Secure/);
+    assert.match(proxyCookie, /Path=\//);
+    assert.match(proxyCookie, /SameSite=Lax/i);
+    assert.doesNotMatch(proxyCookie, /Domain=/i, "proxy session cookies must remain host-only");
+    const replay = await requestAtHost("/__hydranms/session", `${deviceId}.olt.hydranms.in`, {
+      method: "POST",
+      headers: { "x-forwarded-proto": "https", origin: `https://${deviceId}.olt.hydranms.in` },
+      body: { grant: grantResponse.body.grant, portalOrigin },
+    });
+    assert.equal(replay.status, 403, "a handoff grant can only be exchanged once");
+
+    const crossTenant = await request(`/api/devices/${deviceId}/olt-login`, {
+      method: "POST",
+      headers: { cookie: authB.cookie, origin: `https://${tenantB.subdomain}.hydranms.in` },
+      body: { protocol: "http" },
+    });
+    assert.equal(crossTenant.status, 404, "a tenant cannot obtain a proxy grant for another tenant's device");
+    await db.update(vpnSites).set({ routeState: "pending" }).where(eq(vpnSites.id, siteId));
+    const revokedRoute = await requestAtHost("/", `${deviceId}.olt.hydranms.in`, {
+      headers: {
+        "x-forwarded-proto": "https",
+        cookie: proxyCookie.split(";")[0],
+      },
+    });
+    assert.equal(revokedRoute.status, 403, "an established proxy cookie cannot outlive its active WireGuard route");
+  } finally {
+    if (server) await stopServer(server);
+    if (originalProxyDomain === undefined) delete process.env.OLT_PROXY_BASE_DOMAIN;
+    else process.env.OLT_PROXY_BASE_DOMAIN = originalProxyDomain;
     await cleanup(companyIds);
   }
 });

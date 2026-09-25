@@ -14,6 +14,8 @@ tags:
     description: NMS overview and operational summaries
   - name: devices
     description: SNMP-managed devices and discovery
+  - name: vpn
+    description: WireGuard site connectivity for customer networks
   - name: alerts
     description: Availability and threshold alerts
   - name: companies
@@ -184,6 +186,83 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Device"
+  /vpn/sites:
+    get:
+      operationId: getVpnSites
+      tags: [vpn]
+      summary: List WireGuard sites visible to the active company
+      responses:
+        "200":
+          description: WireGuard site inventory
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VpnSite"
+    post:
+      operationId: createVpnSite
+      tags: [vpn]
+      summary: Create a WireGuard site for a company
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VpnSiteInput"
+      responses:
+        "201":
+          description: WireGuard site created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VpnSite"
+        "400":
+          description: Invalid or overlapping network
+        "403":
+          description: Super-admin access required
+  /vpn/sites/{siteId}/bundle:
+    post:
+      operationId: generateVpnSiteBundle
+      tags: [vpn]
+      summary: Generate a one-time WireGuard and RouterOS onboarding bundle
+      parameters:
+        - name: siteId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: WireGuard configuration bundle
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VpnSiteBundle"
+        "404":
+          description: Site not found in the active company
+        "409":
+          description: WireGuard server settings are not configured
+  /vpn/sites/{siteId}/revoke:
+    post:
+      operationId: revokeVpnSite
+      tags: [vpn]
+      summary: Revoke a WireGuard site peer
+      parameters:
+        - name: siteId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Site peer revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VpnSite"
+        "403":
+          description: Super-admin access required
+        "404":
+          description: Site not found in the active company
   /devices/{deviceId}:
     delete:
       operationId: deleteDevice
@@ -199,6 +278,39 @@ paths:
           description: Device deleted
         "404":
           description: Device not found in the active company
+  /devices/{deviceId}/olt-login:
+    post:
+      operationId: createDeviceOltLogin
+      tags: [devices]
+      summary: Create a short-lived isolated management session for a WireGuard device
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceOltLoginInput"
+      responses:
+        "200":
+          description: Single-use browser handoff grant and isolated proxy URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceOltLogin"
+        "400":
+          description: Invalid protocol or company selection
+        "403":
+          description: Portal origin or authentication is not allowed
+        "404":
+          description: Device not found in the active company
+        "409":
+          description: Device is not attached to an active WireGuard route
+        "503":
+          description: Isolated OLT proxy is unavailable
   /devices/{deviceId}/details:
     get:
       operationId: getDeviceDetails
@@ -243,6 +355,54 @@ paths:
                 $ref: "#/components/schemas/Device"
         "404":
           description: Device not found in the active company
+  /devices/{deviceId}/web-login-settings:
+    patch:
+      operationId: updateDeviceWebLoginSettings
+      tags: [devices]
+      summary: Configure the web protocol and port for a monitored OLT
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceWebLoginSettingsInput"
+      responses:
+        "200":
+          description: Updated OLT web-login configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "400":
+          description: Invalid protocol or unsupported web port
+        "404":
+          description: Device not found in the active company
+  /devices/{deviceId}/olt-web-login/session:
+    post:
+      operationId: createOltWebLoginSession
+      tags: [devices]
+      summary: Create a short-lived, tenant-scoped OLT proxy session
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Isolated OLT proxy origin and one-time bootstrap ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OltWebLoginSession"
+        "404":
+          description: OLT not found in the active company
+        "409":
+          description: OLT settings, VPN route, or proxy hostname is not ready
   /devices/{deviceId}/cli-settings:
     patch:
       operationId: updateDeviceCliSettings
@@ -892,6 +1052,35 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/PaymentWebhookEvent"
+  /admin/billing/payments:
+    get:
+      operationId: getAdminPaymentRecords
+      tags: [billing]
+      summary: List payment and invoice records for every company
+      parameters:
+        - name: page
+          in: query
+          description: One-based page number, ordered from newest checkout to oldest
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: pageSize
+          in: query
+          description: Number of checkout records per page
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: companyId
+          in: query
+          description: Restrict records to one company
+          schema: { type: string }
+        - name: status
+          in: query
+          description: Restrict records to one checkout payment status
+          schema: { type: string, enum: [pending, paid, failed] }
+      responses:
+        "200":
+          description: Bounded page of all-company payment and invoice records
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminPaymentRecordList"
   /support/tickets:
     get:
       operationId: getSupportTickets
@@ -1117,11 +1306,54 @@ components:
       properties:
         label: { type: string }
         value: { type: number }
-    Device:
+    VpnSite:
       type: object
-      required: [id, name, ipAddress, vendor, type, status, uptime, lastSeen, location, mibProfile, ponCountOid, onuCountOid, rxPowerRoot, txPowerRoot, ponCount, onuCount, rxPower, txPower, sysUpTimeSeconds, systemVersion, ramPercent, diskPercent, interfaceCount, lastPollAt, cliConfigured, cliProtocol, sshPort, telnetPort, cliUsername]
+      required: [id, companyId, name, lanCidr, tunnelAddress, routerOsVersion, status, routeState, lastHandshakeAt, lastBundleAt, revokedAt, createdAt, updatedAt]
       properties:
         id: { type: string }
+        companyId: { type: string }
+        name: { type: string }
+        lanCidr: { type: string }
+        tunnelAddress: { type: string }
+        routerOsVersion: { type: string }
+        status: { type: string, enum: [pending, active, offline, revoked] }
+        routeState: { type: string, enum: [pending, applied, error] }
+        lastHandshakeAt: { type: ["string", "null"], format: date-time }
+        lastBundleAt: { type: ["string", "null"], format: date-time }
+        revokedAt: { type: ["string", "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    VpnSiteInput:
+      type: object
+      required: [companyId, name, lanCidr, routerOsVersion]
+      properties:
+        companyId: { type: string, minLength: 1 }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        lanCidr: { type: string, pattern: "^[0-9.]+/[0-9]+$" }
+        routerOsVersion: { type: string, minLength: 1, maxLength: 40 }
+    VpnSiteBundle:
+      type: object
+      required: [siteId, name, tunnelAddress, lanCidr, serverEndpoint, serverPublicKey, clientPrivateKey, clientPublicKey, wireguardConfig, routerOsScript, serverPeerSnippet, generatedAt]
+      properties:
+        siteId: { type: string }
+        name: { type: string }
+        tunnelAddress: { type: string }
+        lanCidr: { type: string }
+        serverEndpoint: { type: string }
+        serverPublicKey: { type: string }
+        clientPrivateKey: { type: string }
+        clientPublicKey: { type: string }
+        wireguardConfig: { type: string }
+        routerOsScript: { type: string }
+        serverPeerSnippet: { type: string }
+        generatedAt: { type: string, format: date-time }
+    Device:
+      type: object
+      required: [id, companyId, vpnSiteId, name, ipAddress, vendor, type, status, uptime, lastSeen, location, mibProfile, ponCountOid, onuCountOid, rxPowerRoot, txPowerRoot, ponCount, onuCount, rxPower, txPower, sysUpTimeSeconds, systemVersion, ramPercent, diskPercent, interfaceCount, lastPollAt, cliConfigured, cliProtocol, sshPort, telnetPort, cliUsername, webLoginProtocol, webLoginPort]
+      properties:
+        id: { type: string }
+        companyId: { type: string }
+        vpnSiteId: { type: ["string", "null"] }
         name: { type: string }
         ipAddress: { type: string }
         vendor: { type: string }
@@ -1150,6 +1382,15 @@ components:
         sshPort: { type: ["integer", "null"] }
         telnetPort: { type: ["integer", "null"] }
         cliUsername: { type: ["string", "null"] }
+        webLoginProtocol: { type: ["string", "null"], enum: [http, https, null] }
+        webLoginPort: { type: ["integer", "null"] }
+    OltWebLoginSession:
+      type: object
+      required: [proxyOrigin, ticket, ticketExpiresAt]
+      properties:
+        proxyOrigin: { type: string, format: uri }
+        ticket: { type: string, description: Short-lived one-time token; never log or persist it }
+        ticketExpiresAt: { type: string, format: date-time }
     DeviceInterface:
       type: object
       required: [id, deviceId, ifIndex, name, alias, adminStatus, operStatus, speedMbps, rxBytes, txBytes, sfpVendor, sfpSerialNumber, opticalRxPower, opticalTxPower, updatedAt, seriesKey]
@@ -1247,6 +1488,7 @@ components:
       type: object
       required: [name, ipAddress, vendor, type, location]
       properties:
+        vpnSiteId: { type: ["string", "null"] }
         name: { type: string, minLength: 1 }
         ipAddress: { type: string, minLength: 1 }
         vendor: { type: string, minLength: 1 }
@@ -1275,6 +1517,12 @@ components:
         onuCountOid: { type: ["string", "null"] }
         rxPowerRoot: { type: ["string", "null"] }
         txPowerRoot: { type: ["string", "null"] }
+    DeviceWebLoginSettingsInput:
+      type: object
+      required: [webLoginProtocol, webLoginPort]
+      properties:
+        webLoginProtocol: { type: ["string", "null"], enum: [http, https, null] }
+        webLoginPort: { type: ["integer", "null"] }
     DeviceCliSettingsInput:
       type: object
       required: [cliProtocol, sshPort, telnetPort, cliUsername, cliPassword]
@@ -1284,6 +1532,17 @@ components:
         telnetPort: { type: integer, minimum: 1, maximum: 65535 }
         cliUsername: { type: string, minLength: 1 }
         cliPassword: { type: string, minLength: 1 }
+    DeviceOltLoginInput:
+      type: object
+      required: [protocol]
+      properties:
+        protocol: { type: string, enum: [http, https] }
+    DeviceOltLogin:
+      type: object
+      required: [grant, iframeUrl]
+      properties:
+        grant: { type: string }
+        iframeUrl: { type: string, format: uri }
     DeviceCliCommandInput:
       type: object
       required: [protocol, command]
@@ -1540,6 +1799,31 @@ components:
       type: array
       items:
         $ref: "#/components/schemas/PaymentRecord"
+    AdminPaymentRecord:
+      allOf:
+        - $ref: "#/components/schemas/PaymentRecord"
+        - type: object
+          required: [companyId, companyName, companyEmail, companySubdomain, companyGstNumber, companyAddress, companyContactNumber]
+          properties:
+            companyId: { type: string }
+            companyName: { type: string }
+            companyEmail: { type: string }
+            companySubdomain: { type: string }
+            companyGstNumber: { type: ["string", "null"] }
+            companyAddress: { type: string }
+            companyContactNumber: { type: string }
+    AdminPaymentRecordList:
+      type: object
+      required: [items, page, pageSize, total, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminPaymentRecord"
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1, maximum: 50 }
+        total: { type: integer, minimum: 0 }
+        hasMore: { type: boolean }
     LicenseUpdateInput:
       type: object
       required: [status, planId, expiresAt]

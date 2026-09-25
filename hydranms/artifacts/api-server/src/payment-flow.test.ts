@@ -2525,6 +2525,281 @@ test("super-admin overview totals follow live platform changes and stay role-pro
   }
 });
 
+test("super-admin billing history includes purchases from every company and stays tenant-protected", async () => {
+  assert.ok(process.env.DATABASE_URL, "DATABASE_URL is required for admin billing history tests");
+  assert.ok(process.env.SESSION_SECRET, "SESSION_SECRET is required for admin billing history tests");
+  assert.ok(process.env.SUPERADMIN_PASSWORD, "SUPERADMIN_PASSWORD is required for admin billing history tests");
+
+  const companyIds: string[] = [];
+  const webhookEventIds: string[] = [];
+  let apiServer: Server | undefined;
+  let frontend: ChildProcess | undefined;
+  let proxy: Server | undefined;
+  let browser: ChildProcess | undefined;
+  let page: CdpPage | undefined;
+
+  try {
+    await ensurePortalData();
+    apiServer = await startServer();
+
+    const firstTenant = await registerTenant("admin-billing-alpha");
+    const secondTenant = await registerTenant("admin-billing-beta");
+    companyIds.push(firstTenant.companyId, secondTenant.companyId);
+    const tenantCookie = await login(firstTenant.email, firstTenant.password);
+    const adminCookie = await login(
+      process.env.SUPERADMIN_USERNAME ?? "superadmin-admin",
+      process.env.SUPERADMIN_PASSWORD,
+    );
+
+    const purchases = [
+      {
+        tenant: firstTenant,
+        amount: 7499,
+        planId: "growth",
+        gatewayReference: `TXN-${suffix("alpha")}`,
+        bankUrn: `URN-${suffix("alpha")}`,
+      },
+      {
+        tenant: secondTenant,
+        amount: 14999,
+        planId: "enterprise",
+        gatewayReference: `TXN-${suffix("beta")}`,
+        bankUrn: `URN-${suffix("beta")}`,
+      },
+    ];
+    const expectedPurchases: Array<{
+      companyId: string;
+      companyName: string;
+      checkoutId: string;
+      amount: number;
+      gatewayReference: string;
+      bankUrn: string;
+    }> = [];
+
+    for (const purchase of purchases) {
+      const checkout = await createCheckoutSession({
+        companyId: purchase.tenant.companyId,
+        planId: purchase.planId,
+        amount: purchase.amount,
+        currency: "INR",
+      });
+      await db
+        .update(checkoutSessions)
+        .set({ status: "paid", updatedAt: new Date() })
+        .where(eq(checkoutSessions.id, checkout.id));
+
+      const eventId = `evt-${suffix("admin-billing")}`;
+      webhookEventIds.push(eventId);
+      await db.insert(paymentWebhookEvents).values({
+        id: `payment-event-${suffix("admin-billing")}`,
+        provider: "ablepay",
+        eventId,
+        eventType: "payment.succeeded",
+        status: "processed",
+        payload: {
+          id: eventId,
+          type: "payment.succeeded",
+          data: {
+            status: "paid",
+            checkoutId: checkout.id,
+            transaction_id: purchase.gatewayReference,
+            bank_urn: purchase.bankUrn,
+          },
+        },
+        attempts: 1,
+        processedAt: new Date(),
+      });
+      expectedPurchases.push({
+        companyId: purchase.tenant.companyId,
+        companyName: `${purchase.tenant === firstTenant ? "admin-billing-alpha" : "admin-billing-beta"} Payment Test Company`,
+        checkoutId: checkout.id,
+        amount: purchase.amount,
+        gatewayReference: purchase.gatewayReference,
+        bankUrn: purchase.bankUrn,
+      });
+    }
+
+    const denied = await request(`/api/admin/billing/payments?companyId=${encodeURIComponent(expectedPurchases[0].companyId)}`, {
+      headers: { cookie: tenantCookie },
+    });
+    assert.equal(denied.status, 403, "tenant users must not read all-company billing history");
+
+    const history = await request("/api/admin/billing/payments", {
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(history.status, 200, JSON.stringify(history.body));
+    assert.equal(history.body.page, 1);
+    assert.equal(history.body.pageSize, 20);
+    assert.ok(history.body.total >= expectedPurchases.length);
+    const records = history.body.items.filter((record: any) =>
+      expectedPurchases.some((purchase) => purchase.checkoutId === record.id),
+    );
+    assert.equal(records.length, expectedPurchases.length);
+    for (const purchase of expectedPurchases) {
+      const record = records.find((candidate: any) => candidate.id === purchase.checkoutId);
+      assert.ok(record, `missing billing record for ${purchase.companyName}`);
+      assert.deepEqual(
+        {
+          companyId: record.companyId,
+          companyName: record.companyName,
+          invoiceNumber: record.invoiceNumber,
+          status: record.status,
+          amount: record.amount,
+          gatewayReference: record.gatewayReference,
+          bankUrn: record.bankUrn,
+        },
+        {
+          companyId: purchase.companyId,
+          companyName: purchase.companyName,
+          invoiceNumber: record.invoiceNumber,
+          status: "paid",
+          amount: purchase.amount,
+          gatewayReference: purchase.gatewayReference,
+          bankUrn: purchase.bankUrn,
+        },
+      );
+      assert.match(record.invoiceNumber, /^HYDRA\/\d{4}\//);
+    }
+
+    const filteredHistory = await request(
+      `/api/admin/billing/payments?companyId=${encodeURIComponent(expectedPurchases[0].companyId)}&status=paid`,
+      { headers: { cookie: adminCookie } },
+    );
+    assert.equal(filteredHistory.status, 200, JSON.stringify(filteredHistory.body));
+    assert.equal(filteredHistory.body.total, 1);
+    assert.equal(filteredHistory.body.items.length, 1);
+    assert.equal(filteredHistory.body.items[0].id, expectedPurchases[0].checkoutId);
+    assert.equal(filteredHistory.body.items[0].companyId, expectedPurchases[0].companyId);
+    assert.equal(filteredHistory.body.items[0].status, "paid");
+
+    const invalidStatus = await request("/api/admin/billing/payments?status=settled", {
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(invalidStatus.status, 400);
+
+    const boundedHistory = await request("/api/admin/billing/payments?page=1&pageSize=1", {
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(boundedHistory.status, 200, JSON.stringify(boundedHistory.body));
+    assert.equal(boundedHistory.body.page, 1);
+    assert.equal(boundedHistory.body.pageSize, 1);
+    assert.ok(boundedHistory.body.items.length <= 1);
+    assert.equal(boundedHistory.body.hasMore, boundedHistory.body.total > 1);
+
+    const invalidPageSize = await request("/api/admin/billing/payments?pageSize=51", {
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(invalidPageSize.status, 400);
+
+    const frontendPort = await unusedPort();
+    frontend = startHydraFrontend(frontendPort);
+    await waitForHttp(`http://127.0.0.1:${frontendPort}/`);
+    proxy = await startBrowserProxy(frontendPort);
+    const proxyAddress = proxy.address();
+    assert.ok(proxyAddress && typeof proxyAddress === "object");
+    const browserUrl = `http://127.0.0.1:${proxyAddress.port}`;
+
+    const launched = await launchBrowser();
+    browser = launched.browser;
+    page = launched.page;
+    await page.command("Page.navigate", { url: `${browserUrl}/login` });
+    await browserWaitFor(
+      page,
+      `Boolean(document.querySelector('[data-testid="input-login-password"]'))`,
+      "super-admin login form did not load",
+    );
+    await browserFill(
+      page,
+      '[data-testid="input-email-or-username"]',
+      process.env.SUPERADMIN_USERNAME ?? "superadmin-admin",
+    );
+    await browserFill(page, '[data-testid="input-login-password"]', process.env.SUPERADMIN_PASSWORD);
+    await browserClick(page, '[data-testid="button-submit-login"]');
+    await browserWaitFor(
+      page,
+      `Boolean(localStorage.getItem("hydranms-token")) && location.pathname === "/"`,
+      "super-admin did not sign in through the browser",
+    );
+    await page.command("Page.navigate", { url: `${browserUrl}/plans` });
+    await browserWaitFor(
+      page,
+      `document.querySelectorAll('[data-testid^="row-admin-payment-"]').length >= 2`,
+      "Plans & billing did not render both company purchases",
+    );
+
+    const renderedRows = await page.evaluate<Array<{ text: string; visibleFields: string[] }>>(
+      `Array.from(document.querySelectorAll('[data-testid^="row-admin-payment-"]')).filter((row) => {
+        const text = row.textContent ?? "";
+        return ${JSON.stringify(expectedPurchases.map((purchase) => purchase.companyName))}.some((name) => text.includes(name));
+      }).map((row) => ({
+        text: row.textContent ?? "",
+        visibleFields: ${JSON.stringify(
+          expectedPurchases.flatMap((purchase) => [
+            purchase.companyName,
+            purchase.gatewayReference,
+            purchase.bankUrn,
+            purchase.amount.toLocaleString("en-IN", { minimumFractionDigits: 2 }),
+          ]),
+        )}.filter((value) => (row.textContent ?? "").includes(value)),
+      }))`,
+    );
+    assert.equal(renderedRows.length, expectedPurchases.length);
+    for (const purchase of expectedPurchases) {
+      const row = renderedRows.find((candidate) => candidate.text.includes(purchase.companyName));
+      assert.ok(row, `Plans & billing is missing ${purchase.companyName}`);
+      for (const value of [
+        purchase.companyName,
+        purchase.gatewayReference,
+        purchase.bankUrn,
+        purchase.amount.toLocaleString("en-IN", { minimumFractionDigits: 2 }),
+        "paid",
+      ]) {
+        assert.match(row.text, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+      }
+    }
+
+    await browserWaitFor(
+      page,
+      `document.querySelector('[data-testid="select-admin-payment-company"] option[value="${expectedPurchases[0].companyId}"]') !== null`,
+      "billing company filter did not load company options",
+    );
+    await browserSelect(page, '[data-testid="select-admin-payment-company"]', expectedPurchases[0].companyId);
+    await browserSelect(page, '[data-testid="select-admin-payment-status"]', "paid");
+    await browserWaitFor(
+      page,
+      `document.querySelectorAll('[data-testid^="row-admin-payment-"]').length === 1`,
+      "billing filters did not narrow the ledger",
+    );
+    const filteredUrl = await page.evaluate<string>("location.href");
+    assert.match(filteredUrl, new RegExp(`companyId=${encodeURIComponent(expectedPurchases[0].companyId)}`));
+    assert.match(filteredUrl, /status=paid/);
+    const filteredRow = await page.evaluate<string>(
+      "document.querySelector('[data-testid^=\"row-admin-payment-\"]')?.textContent ?? ''",
+    );
+    assert.match(filteredRow, new RegExp(expectedPurchases[0].companyName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    await browserClick(page, '[data-testid="button-refresh-admin-payments"]');
+    await browserWaitFor(
+      page,
+      `document.querySelector('[data-testid="select-admin-payment-company"]')?.value === ${JSON.stringify(expectedPurchases[0].companyId)} && document.querySelector('[data-testid="select-admin-payment-status"]')?.value === "paid"`,
+      "billing filters did not survive a table refresh",
+    );
+  } finally {
+    await page?.close();
+    await stopChildProcess(browser);
+    proxy && await stopServer(proxy);
+    await stopChildProcess(frontend);
+    apiServer && await stopServer(apiServer);
+    if (webhookEventIds.length) {
+      await db.delete(paymentWebhookEvents).where(inArray(paymentWebhookEvents.eventId, webhookEventIds));
+    }
+    if (companyIds.length) {
+      await db.delete(checkoutSessions).where(inArray(checkoutSessions.companyId, companyIds));
+      await db.delete(portalUsers).where(inArray(portalUsers.companyId, companyIds));
+      await db.delete(companies).where(inArray(companies.id, companyIds));
+    }
+  }
+});
+
 test("public contact page shows loading, success, and failure states", async () => {
   assert.ok(process.env.DATABASE_URL, "DATABASE_URL is required for contact browser tests");
 

@@ -40,11 +40,40 @@ export const pollerLogs = pgTable(
   ],
 );
 
+export const vpnSites = pgTable(
+  "vpn_sites",
+  {
+    id: text("id").primaryKey(),
+    companyId: text("company_id").notNull(),
+    name: text("name").notNull(),
+    lanCidr: text("lan_cidr").notNull(),
+    tunnelAddress: text("tunnel_address").notNull(),
+    routerOsVersion: text("router_os_version").notNull(),
+    clientPublicKey: text("client_public_key").notNull(),
+    encryptedClientPrivateKey: text("encrypted_client_private_key").notNull(),
+    status: text("status").notNull().default("pending"),
+    routeState: text("route_state").notNull().default("pending"),
+    lastHandshakeAt: timestamp("last_handshake_at", { withTimezone: true }),
+    lastBundleAt: timestamp("last_bundle_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique("vpn_sites_company_name_unique").on(table.companyId, table.name),
+    unique("vpn_sites_tunnel_address_unique").on(table.tunnelAddress),
+    unique("vpn_sites_client_public_key_unique").on(table.clientPublicKey),
+    index("vpn_sites_company_index").on(table.companyId),
+    index("vpn_sites_lan_cidr_index").on(table.lanCidr),
+  ],
+);
+
 export const monitoredDevices = pgTable(
   "monitored_devices",
   {
     id: text("id").primaryKey(),
     companyId: text("company_id").notNull(),
+    vpnSiteId: text("vpn_site_id"),
     name: text("name").notNull(),
     ipAddress: text("ip_address").notNull(),
     vendor: text("vendor").notNull(),
@@ -77,6 +106,8 @@ export const monitoredDevices = pgTable(
     telnetPort: integer("telnet_port"),
     cliUsername: text("cli_username"),
     encryptedCliPassword: text("encrypted_cli_password"),
+    webLoginProtocol: text("web_login_protocol"),
+    webLoginPort: integer("web_login_port"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -208,6 +239,7 @@ export const discoveryJobs = pgTable(
 );
 
 export const insertSnmpCredentialSchema = createInsertSchema(snmpCredentials);
+export const insertVpnSiteSchema = createInsertSchema(vpnSites);
 export const insertMonitoredDeviceSchema = createInsertSchema(monitoredDevices);
 export const insertDeviceInterfaceSchema = createInsertSchema(deviceInterfaces);
 export const insertPonTelemetrySchema = createInsertSchema(ponTelemetry);
@@ -215,6 +247,7 @@ export const insertNmsAlertSchema = createInsertSchema(nmsAlerts);
 export const insertDiscoveryJobSchema = createInsertSchema(discoveryJobs);
 
 export type SnmpCredential = typeof snmpCredentials.$inferSelect;
+export type VpnSite = typeof vpnSites.$inferSelect;
 export type MonitoredDevice = typeof monitoredDevices.$inferSelect;
 export type DeviceInterface = typeof deviceInterfaces.$inferSelect;
 export type PonTelemetry = typeof ponTelemetry.$inferSelect;

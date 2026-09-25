@@ -11,6 +11,8 @@ import type { DeviceInputSnmpSecurityLevel } from './deviceInputSnmpSecurityLeve
 import type { DeviceInputSnmpVersion } from './deviceInputSnmpVersion';
 
 export interface DeviceInput {
+  /** @nullable */
+  vpnSiteId?: string | null;
   /** @minLength 1 */
   name: string;
   /** @minLength 1 */

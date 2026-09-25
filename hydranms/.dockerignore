@@ -1,0 +1,14 @@
+.git
+.agents
+.local
+node_modules
+**/node_modules
+**/dist
+**/.turbo
+**/.cache
+*.tsbuildinfo
+data
+.env
+.env.*
+!.env.example
+*.log
